@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<index version="1" name="SGM Studios - Suno AI Workflow Suite">
+  <description>Six-script pipeline for importing, organizing, and mastering Suno AI audio in REAPER. Import ZIP files, rename/categorize tracks, detect BPM, split at structural boundaries, normalize loudness, and align stems — end to end, no coding required.</description>
+  <website>https://github.com/SGM-Studios/sgm-suno-workflow</website>
+  <license>MIT</license>
+
+  <!-- ================================================================ -->
+  <!-- SUNO ZIP IMPORTER                                                 -->
+  <!-- ================================================================ -->
+  <category name="Import">
+    <reapack name="Suno_ZIP_Importer" type="script">
+      <version name="1.1.0" time="2026-05-23">
+        <commit>Initial ImGui release with file dialog + progress + lyric markers</commit>
+        <files>
+          <file name="Suno_ZIP_Importer.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+
+  <!-- ================================================================ -->
+  <!-- METADATA ORGANIZER                                                -->
+  <!-- ================================================================ -->
+  <category name="Track">
+    <reapack name="Suno_01_MetadataOrganizer" type="script">
+      <version name="1.0.1" time="2026-06-03">
+        <commit>Fix Suno ID detection: replace invalid Lua {8,32} pattern with validated %w+ match. Fix stem label casing.</commit>
+        <files>
+          <file name="Suno_01_MetadataOrganizer.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+
+  <!-- ================================================================ -->
+  <!-- TEMPO MAPPER                                                      -->
+  <!-- ================================================================ -->
+  <category name="Tempo">
+    <reapack name="Suno_02_TempoMapper" type="script">
+      <version name="1.0.0" time="2026-05-23">
+        <commit>Initial release: RMS-onset BPM detection + guard marker + manual override</commit>
+        <files>
+          <file name="Suno_02_TempoMapper.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+
+  <!-- ================================================================ -->
+  <!-- DYNAMIC SPLITTER                                                  -->
+  <!-- ================================================================ -->
+  <category name="Editing">
+    <reapack name="Suno_03_DynamicSplitter" type="script">
+      <version name="1.0.0" time="2026-05-23">
+        <commit>Initial release: long-window energy contrast structural detection + right-to-left splitting</commit>
+        <files>
+          <file name="Suno_03_DynamicSplitter.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+
+  <!-- ================================================================ -->
+  <!-- LOUDNESS MASTER                                                   -->
+  <!-- ================================================================ -->
+  <category name="Editing">
+    <reapack name="Suno_04_LoudnessMaster" type="script">
+      <version name="1.0.0" time="2026-05-23">
+        <commit>Initial release: peak-RMS loudness measurement + batch normalisation to target LUFS</commit>
+        <files>
+          <file name="Suno_04_LoudnessMaster.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+
+  <!-- ================================================================ -->
+  <!-- STEM ALIGNER                                                      -->
+  <!-- ================================================================ -->
+  <category name="Track">
+    <reapack name="Suno_05_StemAligner" type="script">
+      <version name="1.0.1" time="2026-06-03">
+        <commit>Fix Suno ID stripping pattern. Group stems, align, create folder/bus structure.</commit>
+        <files>
+          <file name="Suno_05_StemAligner.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+
+  <!-- ================================================================ -->
+  <!-- BUNDLE METAPACKAGE                                                -->
+  <!-- ================================================================ -->
+  <category name="Track">
+    <reapack name="SGM SunoWorkflow Bundle" type="script">
+      <version name="1.1.1" time="2026-06-03">
+        <commit>Metapackage: installing this pulls all 6 Suno workflow scripts</commit>
+        <files>
+          <file name="SGM_SunoWorkflow_Bundle.lua" />
+        </files>
+      </version>
+    </reapack>
+  </category>
+</index>

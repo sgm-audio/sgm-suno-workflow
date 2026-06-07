@@ -7,8 +7,7 @@
 --     + Long-window energy contrast structural detection
 --     + Splits at section boundaries, not individual beat onsets
 --     + Adds section markers at each split point
--- @provides
---   [main] Suno_03_DynamicSplitter.lua
+-- @provides [main] Suno_03_DynamicSplitter.lua
 -- @about
 --   ## Suno Dynamic Splitter
 --   Splits Suno audio items at musically significant structural transitions

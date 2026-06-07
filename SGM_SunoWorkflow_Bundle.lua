@@ -10,13 +10,12 @@
 --     + Suno_ZIP_Importer updated to 1.1.0: ImGui window, lyrics markers, Project Notes
 --   1.0.0
 --     + Initial release of five-script pipeline
--- @provides
---   [main] Suno_ZIP_Importer.lua
---   [main] Suno_01_MetadataOrganizer.lua
---   [main] Suno_02_TempoMapper.lua
---   [main] Suno_03_DynamicSplitter.lua
---   [main] Suno_04_LoudnessMaster.lua
---   [main] Suno_05_StemAligner.lua
+-- @provides [main] Suno_ZIP_Importer.lua
+-- @provides [main] Suno_01_MetadataOrganizer.lua
+-- @provides [main] Suno_02_TempoMapper.lua
+-- @provides [main] Suno_03_DynamicSplitter.lua
+-- @provides [main] Suno_04_LoudnessMaster.lua
+-- @provides [main] Suno_05_StemAligner.lua
 
 return "SGM Studios Bundle: Suno AI Workflow Suite"
 

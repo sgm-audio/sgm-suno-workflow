@@ -7,8 +7,7 @@
 --     + Per-item integrated loudness measurement
 --     + Batch normalisation to user-defined LUFS target
 --     + Corrects wild volume variation typical of AI-generated audio
--- @provides
---   [main] Suno_04_LoudnessMaster.lua
+-- @provides [main] Suno_04_LoudnessMaster.lua
 -- @about
 --   ## Suno Loudness Master
 --   Normalises selected Suno audio items to a target integrated loudness level.

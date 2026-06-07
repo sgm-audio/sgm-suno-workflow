@@ -7,8 +7,7 @@
 --     + Long-window energy contrast BPM detection
 --     + Inserts tempo marker at item start position
 --     + Aligns project grid to detected BPM
--- @provides
---   [main] Suno_02_TempoMapper.lua
+-- @provides [main] Suno_02_TempoMapper.lua
 -- @about
 --   ## Suno Tempo Mapper
 --   Detects the BPM of a Suno audio item and sets the project tempo.

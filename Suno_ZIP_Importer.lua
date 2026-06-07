@@ -9,8 +9,7 @@
 --   1.0.0
 --     + Initial release
 --     + ZIP extraction, info.json parsing, folder track creation
--- @provides
---   [main] Suno_ZIP_Importer.lua
+-- @provides [main] Suno_ZIP_Importer.lua
 -- @about
 --   ## Suno ZIP Importer
 --   One-click import of a Suno AI generation ZIP file into REAPER.

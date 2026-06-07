@@ -9,8 +9,7 @@
 --     + Detects stem-type suffixes in source filenames
 --     + Assigns stem colors and bus routing
 --     + Creates folder structure and FX chain stubs per stem type
--- @provides
---   [main] Suno_05_StemAligner.lua
+-- @provides [main] Suno_05_StemAligner.lua
 -- @about
 --   ## Suno Stem Aligner
 --   Groups and aligns stem tracks by song name, creates folder/bus structure.

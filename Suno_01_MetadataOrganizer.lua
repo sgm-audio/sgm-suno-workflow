@@ -11,8 +11,7 @@
 --     + Renames tracks to extracted song title
 --     + Assigns per-song colors and stem-specific colors
 --     + Writes extracted metadata to REAPER project notes
--- @provides
---   [main] Suno_01_MetadataOrganizer.lua
+-- @provides [main] Suno_01_MetadataOrganizer.lua
 -- @about
 --   ## Suno Metadata Organizer
 --   Organizes tracks after Suno ZIP import: renames tracks, assigns colors,

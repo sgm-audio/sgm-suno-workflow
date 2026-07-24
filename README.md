@@ -88,7 +88,13 @@ Each script shows a console message when complete. If something goes wrong, chec
 
 ## License
 
-MIT — see the `@license` header in each script. Free for personal and commercial use.
+MIT — see [`LICENSE`](LICENSE) and the `@license` header in each script. Free for personal and commercial use.
+
+---
+
+## Known limitations (ZIP importer)
+
+`Suno_ZIP_Importer.lua` extracts archives via shell (`7z`, PowerShell `Expand-Archive`, or `unzip`). Treat ZIP sources as trusted: crafted archives or unusual filenames can still pose shell/path risks until a future pass adds member-path validation or a Lua-native unzip.
 
 ---
 

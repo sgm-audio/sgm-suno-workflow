@@ -1,0 +1,23 @@
+name: Lua Syntax Check
+
+# Off by default: this only runs when manually dispatched.
+# Enabling push/PR triggers is a separate, explicit decision.
+on: workflow_dispatch
+
+jobs:
+  luacheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Syntax-check all Lua files
+        # What this checks: that every .lua file PARSES (luac -p).
+        # What this does NOT check: REAPER API usage, runtime behaviour,
+        # ReaPack index correctness. Those require manual review/testing.
+        run: |
+          set -e
+          for f in *.lua; do
+            echo "checking $f"
+            luac5.4 -p "$f"
+          done

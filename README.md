@@ -1,5 +1,9 @@
 # Suno AI Workflow Suite for REAPER
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![REAPER](https://img.shields.io/badge/REAPER-7.0%2B-blue)](https://www.reaper.fm/)
+[![ReaPack](https://img.shields.io/badge/ReaPack-index-orange)](index.xml)
+
 **Import, organize, and master Suno AI-generated audio inside REAPER — end to end.**
 
 This six-script pipeline takes your raw Suno AI exports (ZIP files with stems) and turns them into a polished, organized, mix-ready REAPER project. Import → label → tempo-map → split → loudness-normalize → align stems.

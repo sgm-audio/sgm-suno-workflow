@@ -15,15 +15,15 @@
 --   **What it does:**
 --   Measures the integrated loudness of each selected audio item using a
 --   peak-RMS approximation method, then applies gain to hit the target LUFS
---   level (default -14 LUFS, the broadcast/streaming standard). Enforces a
---   peak ceiling (default -1.0 dBTP) to prevent digital clipping.
+--   level (default -18 dBFS RMS, used as a rough stand-in for -14 LUFS). Backs
+--   gain off so the peak-cache peak stays under -0.3 dBFS (sample peak, not dBTP).
 --
 --   **Method:**
 --   1. Fetches peak data from REAPER's peak cache at 100 Hz resolution
 --   2. Computes RMS estimate: RMS ≈ sqrt(mean(peak²))
 --   3. Measures dBFS, calculates required gain to reach target LUFS
 --   4. Applies gain via item D_VOL (preserves existing item volume)
---   5. True-peak safety: reduces gain if estimated peak exceeds ceiling
+--   5. Peak safety: reduces gain if the peak-cache peak would exceed the ceiling
 --
 --   **Prerequisites:**
 --   - REAPER 6.70+ (no external extensions required)
@@ -36,8 +36,8 @@
 --   3. Check the console for per-item gain changes
 --
 --   **Configuration (edit at top of script):**
---   - TARGET_LUFS = -14: change to desired target (e.g., -9 for competitive)
---   - PEAK_CEILING = -1.0: dBTP ceiling
+--   - DEFAULT_TARGET = "-18": target in dBFS RMS (e.g., -13 for a louder master)
+--   - PEAK_CEILING = -0.3: peak ceiling in dBFS (sample peak from the peak cache)
 --
 --   **LUFS ↔ dBFS approximation guide:**
 --   - Streaming master:  -14 LUFS ≈ -18 dBFS RMS
@@ -46,7 +46,7 @@
 --
 --   **Limitations:**
 --   - Uses peak-RMS approximation (not true K-weighted LUFS)
---   - Typically tracks within ±1-2 dB of true LUFS for full-mix material
+--   - I haven't measured how far it lands from real LUFS; check with a meter
 --   - For precise LUFS measurement, use a JSFX loudness meter after applying gain
 --[[============================================================================
   SCRIPT : Suno Loudness Master

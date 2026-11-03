@@ -1,8 +1,11 @@
 name: Lua Syntax Check
 
-# Off by default: this only runs when manually dispatched.
-# Enabling push/PR triggers is a separate, explicit decision.
-on: workflow_dispatch
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   luacheck:

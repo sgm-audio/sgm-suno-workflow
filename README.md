@@ -33,7 +33,7 @@ Suno ZIP Export
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│ Loudness Master     │  Normalize to -14 LUFS integrated
+│ Loudness Master     │  Gain to -18 dBFS RMS (rough -14 LUFS)
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
@@ -51,7 +51,7 @@ Suno ZIP Export
 | 2 | **Suno_01_MetadataOrganizer** | Renames tracks from their file names, strips Suno IDs (8–32 character hex hashes), assigns a 20-color cycling palette, and creates named region markers from the track names. |
 | 3 | **Suno_02_TempoMapper** | Detects the track BPM using an RMS-onset algorithm on the first item, sets the project tempo, and inserts a guard marker at the end of the arrangement. Supports manual override via the `MANUAL_BPM` constant. |
 | 4 | **Suno_03_DynamicSplitter** | Splits items at detected transient boundaries. Adjustable sensitivity slider. Right-to-left split order prevents item drift. Names sections based on adjacent region markers. |
-| 5 | **Suno_04_LoudnessMaster** | Measures integrated LUFS (peak-RMS hybrid), applies gain to hit -14 LUFS target, enforces -1.0 dBTP peak ceiling. Safe for already-normalized material. |
+| 5 | **Suno_04_LoudnessMaster** | Gain-normalizes items. It isn't a LUFS meter: it estimates RMS from REAPER's 100 Hz peak cache, applies item gain to hit -18 dBFS RMS (I use that as a rough stand-in for -14 LUFS), and backs the gain off if the peak would go over -0.3 dBFS. That's a peak-cache sample peak, not true peak. Check the result on a real loudness meter. |
 | 6 | **Suno_05_StemAligner** | Groups tracks by base song name (strips "-vocals", "-instrumental", etc.), creates folder/bus tracks, aligns group start times, and names folders. |
 | — | **SGM_SunoWorkflow_Bundle** | ReaPack metapackage — installing this pulls all 6 scripts above. |
 
@@ -85,7 +85,7 @@ Each script shows a console message when complete. If something goes wrong, chec
 - **Suno_ZIP_Importer**: Edit `IMPORT_LYRICS = true` at the top of the script to disable lyric import.
 - **Suno_02_TempoMapper**: Set `MANUAL_BPM = 0` for auto-detect, or set `MANUAL_BPM = 128` to force a specific BPM.
 - **Suno_03_DynamicSplitter**: Adjust sensitivity via the console prompt; lower values = more splits.
-- **Suno_04_LoudnessMaster**: Edit `TARGET_LUFS = -14` and `PEAK_CEILING = -1.0` at the top to change targets.
+- **Suno_04_LoudnessMaster**: Edit `DEFAULT_TARGET = "-18"` (dBFS RMS) and `PEAK_CEILING = -0.3` (dBFS) at the top, or type new values in the prompt when it runs.
 - **Suno_05_StemAligner**: Enable `DRY_RUN = true` to preview group assignments without making changes.
 
 ---

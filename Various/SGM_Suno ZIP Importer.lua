@@ -9,7 +9,7 @@
 --   1.0.0
 --     + Initial release
 --     + ZIP extraction, info.json parsing, folder track creation
--- @provides [main] Suno_ZIP_Importer.lua
+-- @provides [main] .
 -- @about
 --   ## Suno ZIP Importer
 --   One-click import of a Suno AI generation ZIP file into REAPER.
@@ -451,9 +451,14 @@ local function native_color(rgb)
 end
 
 -- Insert a new track at `idx`, name it and optionally color it.
+-- Returns nil if track creation fails.
 local function insert_track(idx, name, color_rgb)
   reaper.InsertTrackAtIndex(idx, true)
   local track = reaper.GetTrack(0, idx)
+  if not track then
+    warn("Failed to create track at index " .. idx)
+    return nil
+  end
   reaper.GetSetMediaTrackInfo_String(track, "P_NAME", name, true)
   if color_rgb then reaper.SetTrackColor(track, native_color(color_rgb)) end
   return track
@@ -474,10 +479,24 @@ local function import_audio(track, filepath)
   end
 
   local item = reaper.AddMediaItemToTrack(track)
+  if not item then
+    warn("Failed to add media item to track: " .. filepath)
+    return nil, nil
+  end
+
   local take = reaper.AddTakeToMediaItem(item)
+  if not take then
+    warn("Failed to add take to media item: " .. filepath)
+    return nil, nil
+  end
+
   reaper.SetMediaItemTake_Source(take, src)
 
   local src_len = reaper.GetMediaSourceLength(src)
+  if not src_len then
+    warn("Cannot get source length: " .. filepath)
+    return nil, nil
+  end
   reaper.SetMediaItemInfo_Value(item, "D_POSITION",   0)
   reaper.SetMediaItemInfo_Value(item, "D_LENGTH",     src_len)
   reaper.SetMediaItemInfo_Value(item, "D_SNAPOFFSET", 0)
@@ -581,6 +600,7 @@ local function do_import()
 
   local insert_idx  = reaper.CountTracks(0)
   local title_label = "[Suno] " .. state.meta.safe_title
+  local cancelled   = false
 
   -- ── 6. Create folder track ──────────────────────────────────────────────
   local folder_track = insert_track(insert_idx, title_label, TRACK_COLOR.folder)
@@ -593,6 +613,7 @@ local function do_import()
 
   for i, stem in ipairs(stems) do
     if state.cancel then
+      cancelled = true
       warn("Import cancelled.")
       break
     end
@@ -616,37 +637,40 @@ local function do_import()
     state.progress = 0.42 + 0.40 * (i / #stems)
   end
 
-  -- ── 8. Structural markers ───────────────────────────────────────────────
-  if state.meta.prompt ~= "" and max_len > 0 then
-    local sections = extract_structure(state.meta.prompt)
-    if #sections > 0 then
-      place_markers(sections, 0, max_len)
-    else
-      info("No [Verse]/[Chorus] tags found in lyrics — no markers placed.")
+  -- Always balance Undo/PreventUIRefresh, even on cancel
+  if not cancelled then
+    -- ── 8. Structural markers ───────────────────────────────────────────────
+    if state.meta.prompt ~= "" and max_len > 0 then
+      local sections = extract_structure(state.meta.prompt)
+      if #sections > 0 then
+        place_markers(sections, 0, max_len)
+      else
+        info("No [Verse]/[Chorus] tags found in lyrics — no markers placed.")
+      end
     end
-  end
-  state.progress = 0.88
+    state.progress = 0.88
 
-  -- ── 9. Save lyrics to Project Notes ────────────────────────────────────
-  if state.meta.prompt ~= "" then
-    local notes = reaper.GetSetProjectNotes(0, false, "")
-    if #notes > 0 then notes = notes .. "\n\n" .. string.rep("─", 40) .. "\n\n" end
-    notes = notes
-      .. ("=== %s  (Suno AI) ===\n"):format(state.meta.title)
-      .. (state.meta.tags ~= "" and ("Tags: %s\n\n"):format(state.meta.tags) or "")
-      .. state.meta.prompt
-    reaper.GetSetProjectNotes(0, true, notes)
-    info("Lyrics saved → View > Project Notes")
-  end
+    -- ── 9. Save lyrics to Project Notes ────────────────────────────────────
+    if state.meta.prompt ~= "" then
+      local notes = reaper.GetSetProjectNotes(0, false, "")
+      if #notes > 0 then notes = notes .. "\n\n" .. string.rep("─", 40) .. "\n\n" end
+      notes = notes
+        .. ("=== %s  (Suno AI) ===\n"):format(state.meta.title)
+        .. (state.meta.tags ~= "" and ("Tags: %s\n\n"):format(state.meta.tags) or "")
+        .. state.meta.prompt
+      reaper.GetSetProjectNotes(0, true, notes)
+      info("Lyrics saved → View > Project Notes")
+    end
 
-  -- ── 10. Restore state ───────────────────────────────────────────────────
-  reaper.SetEditCurPos(saved_cursor, false, false)
-  reaper.GetSet_LoopTimeRange(true, false, saved_sel_s, saved_sel_e, false)
-  reaper.SetOnlyTrackSelected(folder_track)
-  reaper.Main_OnCommand(40913, 0)   -- Track: Scroll to first selected track
+    -- ── 10. Restore state ───────────────────────────────────────────────────
+    reaper.SetEditCurPos(saved_cursor, false, false)
+    reaper.GetSet_LoopTimeRange(true, false, saved_sel_s, saved_sel_e, false)
+    reaper.SetOnlyTrackSelected(folder_track)
+    reaper.Main_OnCommand(40913, 0)   -- Track: Scroll to first selected track
+  end
 
   reaper.PreventUIRefresh(-1)
-  reaper.Undo_EndBlock("Import Suno ZIP: " .. state.meta.title, -1)
+  reaper.Undo_EndBlock(cancelled and "Import Suno ZIP: cancelled" or ("Import Suno ZIP: " .. state.meta.title), -1)
   reaper.UpdateArrange()
   reaper.TrackList_AdjustWindows(false)
   state.progress = 0.96

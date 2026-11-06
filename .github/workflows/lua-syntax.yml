@@ -20,7 +20,7 @@ jobs:
         # ReaPack index correctness. Those require manual review/testing.
         run: |
           set -e
-          for f in *.lua; do
+          for f in *.lua Various/*.lua; do
             echo "checking $f"
             luac5.4 -p "$f"
           done

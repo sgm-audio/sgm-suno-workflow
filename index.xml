@@ -6,10 +6,9 @@
 
   <category name="Import">
     <reapack name="SGM_Suno ZIP Importer" type="script" desc="Import a Suno AI ZIP file: unzip, parse metadata, create color-coded session with lyrics markers">
-      <version name="1.1.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
-        <changelog><![CDATA[+ ImGui-based single-window workflow
-+ Structural markers generated from lyrics timestamps
-+ Lyrics written to REAPER Project Notes]]></changelog>
+      <version name="1.1.1" author="Scott Mills" time="2026-11-06T12:00:00Z">
+        <changelog><![CDATA[+ Validate every ZIP member path before extraction (zip-slip / path-traversal guard; fails closed)
++ Nil-guard folder track and stem tracks so failures can't crash REAPER]]></changelog>
         <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Various/SGM_Suno%20ZIP%20Importer.lua</source>
       </version>
     </reapack>

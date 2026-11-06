@@ -1,5 +1,9 @@
 # Suno AI Workflow Suite — Changelog
 
+## 1.1.2 (2026-11-06)
+- **Suno ZIP Importer v1.1.1**: Validate all ZIP member paths before extraction — rejects absolute paths, drive letters, and `..` segments (zip-slip / path-traversal guard); fails closed if the archive can't be listed
+- **Suno ZIP Importer v1.1.1**: Nil-guard folder track and per-stem tracks so a failed `InsertTrackAtIndex` can no longer crash REAPER (undo block is always balanced)
+
 ## 1.1.1 (2026-06-03)
 - **Bundle**: Updated `@provides` to list all 6 sub-scripts explicitly
 - **Bundle**: Updated `@changelog` with full version history

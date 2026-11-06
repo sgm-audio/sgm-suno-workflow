@@ -98,7 +98,7 @@ MIT — see [`LICENSE`](LICENSE) and the `@license` header in each script. Free 
 
 ## Known limitations (ZIP importer)
 
-`Suno_ZIP_Importer.lua` extracts archives via shell (`7z`, PowerShell `Expand-Archive`, or `unzip`). Treat ZIP sources as trusted: crafted archives or unusual filenames can still pose shell/path risks until a future pass adds member-path validation or a Lua-native unzip.
+`Suno_ZIP_Importer.lua` extracts archives via shell (`7z`, PowerShell `Expand-Archive`, or `unzip`). As of v1.1.1, every ZIP member path is validated **before** extraction — archives containing absolute paths, drive letters, or `..` segments are rejected (zip-slip protection). Remaining caveat: extraction still shells out, so only import ZIPs from sources you trust.
 
 ---
 

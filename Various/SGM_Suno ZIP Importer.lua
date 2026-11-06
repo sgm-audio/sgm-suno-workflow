@@ -1,7 +1,10 @@
 -- @description Import a Suno AI ZIP file: unzip, parse metadata, create color-coded session with lyrics markers
 -- @author Scott Mills
--- @version 1.1.0
+-- @version 1.1.1
 -- @changelog
+--   1.1.1 (2026-11-06)
+--     + Validate every ZIP member path before extraction (zip-slip / path-traversal guard)
+--     + Nil-guard folder track and stem tracks so failures can't crash REAPER
 --   1.1.0 (2026-05-23)
 --     + ImGui-based single-window workflow
 --     + Structural markers generated from lyrics timestamps
@@ -43,7 +46,7 @@
 --[[============================================================================
   SCRIPT : Suno ZIP Importer
   AUTHOR : TrackClear / SGM Studios
-  VERSION: 1.1.0
+  VERSION: 1.1.1
 
   DESCRIPTION:
     Imports a Suno AI music generation ZIP file into REAPER. Automatically
@@ -101,7 +104,7 @@ end
 -- ─── CONSTANTS ──────────────────────────────────────────────────────────────
 
 local SCRIPT_NAME    = "Suno ZIP Importer"
-local SCRIPT_VERSION = "1.1.0"
+local SCRIPT_VERSION = "1.1.1"
 local WINDOW_W       = 640
 local WINDOW_H       = 520
 
@@ -308,8 +311,71 @@ end
 
 -- ─── ZIP EXTRACTION ─────────────────────────────────────────────────────────
 
+-- A ZIP member name is safe to extract under dest_dir only if it is relative
+-- and contains no '..' segment (zip-slip / path-traversal guard).
+local function member_is_safe(name)
+  if type(name) ~= "string" or name == "" then return false end
+  -- reject control characters / null bytes
+  if name:find("[%z\1-\31]") then return false end
+  -- reject absolute paths and Windows drive letters
+  if name:match("^/") or name:match("^\\\\") or name:match("^%a:") then return false end
+  -- reject any '..' path segment
+  for seg in name:gmatch("[^/\\]+") do
+    if seg == ".." then return false end
+  end
+  return true
+end
+
+-- List the member names inside a ZIP using platform tools.
+-- Returns an array of names, or nil if the archive can't be read.
+local function list_zip_members(zip_path)
+  local names = {}
+  if is_windows() then
+    local zp = zip_path:gsub("'", "''")
+    local cmd = ("powershell -NonInteractive -NoProfile -Command "
+      .. "\"Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+      .. "$z = [System.IO.Compression.ZipFile]::OpenRead('%s'); "
+      .. "$z.Entries | ForEach-Object { $_.FullName }; "
+      .. "$z.Dispose()\""):format(zp)
+    local pipe = io.popen(cmd)
+    if not pipe then return nil end
+    for raw in pipe:lines() do
+      local line = raw:gsub("^%s*(.-)%s*$", "%1")
+      if line ~= "" then table.insert(names, line) end
+    end
+    pipe:close()
+  else
+    local zp = zip_path:gsub('"', '\\"')
+    local pipe = io.popen(('unzip -Z1 "%s" 2>/dev/null'):format(zp))
+    if not pipe then return nil end
+    for raw in pipe:lines() do
+      table.insert(names, raw)
+    end
+    pipe:close()
+  end
+  return names
+end
+
 -- Unzip `zip_path` into `dest_dir`. Returns true on success.
+-- Every member path is validated BEFORE extraction; archives containing
+-- absolute paths, drive letters, or '..' segments are rejected (fail closed).
 local function unzip_to(zip_path, dest_dir)
+  if is_windows() and zip_path:find('"') then
+    return false, "ZIP path contains a double quote — refusing to extract."
+  end
+
+  local members = list_zip_members(zip_path)
+  if not members or #members == 0 then
+    return false,
+      "Could not list ZIP contents (corrupt archive, or missing PowerShell/unzip)."
+  end
+  for _, m in ipairs(members) do
+    if not member_is_safe(m) then
+      return false,
+        ("Unsafe path in ZIP: '%s'.\nAborting to prevent path traversal."):format(m)
+    end
+  end
+
   mkdir_p(dest_dir)
 
   local ok, cmd
@@ -604,12 +670,21 @@ local function do_import()
 
   -- ── 6. Create folder track ──────────────────────────────────────────────
   local folder_track = insert_track(insert_idx, title_label, TRACK_COLOR.folder)
+  if not folder_track then
+    -- balance the Undo_BeginBlock / PreventUIRefresh opened in step 5
+    reaper.PreventUIRefresh(-1)
+    reaper.Undo_EndBlock("Import Suno ZIP: failed to create folder track", -1)
+    lerr("Failed to create folder track — aborting import.")
+    state.phase = "error"
+    return
+  end
   -- depth=1 means the next track is the first child of this folder
   reaper.SetMediaTrackInfo_Value(folder_track, "I_FOLDERDEPTH", 1)
   insert_idx = insert_idx + 1
 
   -- ── 7. Import each stem ─────────────────────────────────────────────────
-  local max_len = 0
+  local max_len    = 0
+  local last_track = nil
 
   for i, stem in ipairs(stems) do
     if state.cancel then
@@ -620,21 +695,25 @@ local function do_import()
 
     local tname = ("[Suno] %s (%s)"):format(state.meta.safe_title, stem.label)
     local track  = insert_track(insert_idx, tname, stem.color)
-
-    info(("Importing [%s]  %s"):format(stem.label, basename(stem.path)))
-    local _, ilen = import_audio(track, stem.path)
-    if ilen then
-      info(("  → %.2f s"):format(ilen))
-      if ilen > max_len then max_len = ilen end
+    if not track then
+      warn(("Skipped '%s' — could not create track."):format(stem.label))
+    else
+      last_track = track
+      info(("Importing [%s]  %s"):format(stem.label, basename(stem.path)))
+      local _, ilen = import_audio(track, stem.path)
+      if ilen then
+        info(("  → %.2f s"):format(ilen))
+        if ilen > max_len then max_len = ilen end
+      end
+      insert_idx = insert_idx + 1
     end
 
-    -- depth=-1 on the last child closes the folder
-    if i == #stems then
-      reaper.SetMediaTrackInfo_Value(track, "I_FOLDERDEPTH", -1)
-    end
-
-    insert_idx   = insert_idx + 1
     state.progress = 0.42 + 0.40 * (i / #stems)
+  end
+
+  -- depth=-1 on the last child closes the folder
+  if last_track then
+    reaper.SetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH", -1)
   end
 
   -- Always balance Undo/PreventUIRefresh, even on cancel

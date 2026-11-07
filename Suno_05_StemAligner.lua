@@ -1,7 +1,11 @@
 -- @description Organise third-party stem separations (UVR5, Demucs, Fadr) into a mix-ready layout
 -- @author Scott Mills
--- @version 1.0.1
+-- @version 1.0.2
 -- @changelog
+--   1.0.2 (2026-11-06)
+--     + Fix song-name extraction: validate Suno ID length (not song part), strip stem after ID removal
+--     + Folder/bus indices now computed from live track numbers (safe for interleaved groups)
+--     + Nil-check track creation in insert_named_track
 --   1.0.1 (2026-06-03)
 --     + Fix Suno ID stripping: replace invalid Lua {8,32} pattern with validated %w+ match
 --   1.0.0 (2026-05-23)
@@ -38,20 +42,19 @@
 --   2. All stems are grouped and aligned automatically
 --   3. Check the track list for new folder/bus tracks
 --
---   **Configuration (edit at top of script):**
---   - DRY_RUN = true: preview group assignments without making changes
---   - CREATE_BUS = true: set to false to skip bus track creation
---   - STEM_SUFFIXES: edit the list of recognized stem types
+--   **Configuration:**
+--   - Options are prompted when the script runs (align / folder / bus yes-no)
+--   - STEM_RULES at the top of the script: edit the recognized stem types
 --
 --   **Limitations:**
 --   - REAPER has no direct "move track to index N" API — inserts new folder/bus
 --     tracks adjacent to existing stem tracks
---   - Single-stem groups still get a folder track for consistency
---   - Stem detection relies on filename suffixes (configurable)
+--   - Groups with a single stem are skipped (nothing to align)
+--   - Stem detection relies on filename suffixes (configurable via STEM_RULES)
 --[[============================================================================
   SCRIPT : Suno Stem Aligner
   AUTHOR : TrackClear / SGM Studios
-  VERSION: 1.0.0
+  VERSION: 1.0.2
 
   DESCRIPTION:
     Organises third-party stem separations (from UVR5, Demucs, Fadr, etc.)
@@ -89,7 +92,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Stem Aligner"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.2"
 
 -- ─── STEM CLASSIFICATION ─────────────────────────────────────────────────────
 
@@ -123,10 +126,11 @@ local function native_color(rgb)
   return reaper.ColorToNative(r, g, b) | 0x1000000
 end
 
--- Insert a new named track at index `idx` and return it.
+-- Insert a new named track at index `idx` and return it (nil on failure).
 local function insert_named_track(idx, name, color_rgb)
   reaper.InsertTrackAtIndex(idx, true)
   local track = reaper.GetTrack(0, idx)
+  if not track then return nil end
   reaper.GetSetMediaTrackInfo_String(track, "P_NAME", name, true)
   if color_rgb then reaper.SetTrackColor(track, native_color(color_rgb)) end
   return track
@@ -162,18 +166,19 @@ end
 local function extract_song_name(fname_lower, raw_fname)
   local name = raw_fname  -- preserve original case for display
 
-  -- Strip stem suffix
+  -- Strip Suno ID FIRST (last _XXXXXXXX segment).
+  -- Lua patterns don't support {n,m}; validate the ID length in code.
+  local song_part, id_part = name:match("^(.-)_(%w+)$")
+  if id_part and #id_part >= 8 and #id_part <= 32 then
+    name = song_part
+  end
+
+  -- Strip stem suffix at the end of the remaining name
   for _, rule in ipairs(STEM_RULES) do
     local s = name:lower():find("[%s_%(%-]?" .. rule.pattern .. "$")
     if s then name = trim(name:sub(1, s - 1)) end
   end
 
-  -- Strip Suno ID (last _XXXXXXXX segment, 8–32 chars)
-  -- Lua patterns don't support {n,m}; validate length in code.
-  local stripped = name:match("^(.-)_(%w+)$")
-  if stripped and #stripped >= 8 and #stripped <= 32 then
-    name = stripped
-  end
   name = trim(name:gsub("[_%-]+", " "))
 
   return (name ~= "" and name or "Untitled")
@@ -337,26 +342,31 @@ local function Main()
     -- Strategy: find the track index of the first stem in this group,
     -- insert the folder track immediately before it.
     if do_folder then
-      -- Get current indices (may have shifted due to prior insertions)
+      -- Get current indices (may have shifted due to prior insertions).
+      -- Use the group's own tracks — never assume they are contiguous.
       local min_idx = math.huge
+      local max_idx = -1
       for _, entry in ipairs(group.tracks) do
         local idx = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
         if idx < min_idx then min_idx = idx end
+        if idx > max_idx then max_idx = idx end
       end
 
       -- Insert folder at min_idx (pushes all stem tracks down by 1)
       local folder_name  = "[Suno] " .. song_name
       local folder_track = insert_named_track(min_idx, folder_name, FOLDER_COLOR)
+      if not folder_track then
+        reaper.ShowConsoleMsg(("[%s] WARN: could not create folder for \"%s\"\n")
+          :format(SCRIPT_NAME, song_name))
+        goto next_group
+      end
 
-      -- Because inserting shifts track indices, refresh entry track numbers.
       -- Set I_FOLDERDEPTH = 1 on folder: next track is first child.
       reaper.SetMediaTrackInfo_Value(folder_track, "I_FOLDERDEPTH", 1)
 
-      -- Find the LAST stem track (now at offset min_idx+1 to min_idx+#stems)
-      -- and close the folder with depth = -1.
-      -- Stem tracks are now at indices min_idx+1 .. min_idx+#stems.
-      local last_stem_idx = min_idx + #group.tracks  -- 0-indexed
-      local last_track    = reaper.GetTrack(0, last_stem_idx)
+      -- Close the folder on the group's LAST stem track (by live index,
+      -- shifted +1 by the folder insertion), not by arithmetic.
+      local last_track = reaper.GetTrack(0, max_idx + 1)
       if last_track then
         reaper.SetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH", -1)
       end
@@ -366,25 +376,29 @@ local function Main()
       -- ── Create summing bus ────────────────────────────────────────────
       if do_bus then
         -- Bus goes AFTER the last stem (just after the folder closes)
-        local bus_idx   = last_stem_idx + 1
+        local bus_idx   = max_idx + 2
         local bus_name  = ("[Suno] %s  [BUS]"):format(song_name)
         local bus_track = insert_named_track(bus_idx, bus_name, BUS_COLOR)
-
-        -- Route each stem to the bus (post-fader send, pre-mute by default)
-        for si = 1, #group.tracks do
-          local stem_track = reaper.GetTrack(0, min_idx + si)
-          if stem_track then
-            local send_idx = create_send(stem_track, bus_track)
-            -- Set to post-fader, stereo
-            reaper.SetTrackSendInfo_Value(stem_track, 0, send_idx, "I_SENDMODE", 0)
+        if bus_track then
+          -- Route each stem (live indices: folder pushed them down by 1)
+          for _, entry in ipairs(group.tracks) do
+            local stem_idx   = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
+            local stem_track = reaper.GetTrack(0, stem_idx)
+            if stem_track then
+              local send_idx = create_send(stem_track, bus_track)
+              -- Set to post-fader
+              reaper.SetTrackSendInfo_Value(stem_track, 0, send_idx, "I_SENDMODE", 0)
+            end
           end
-        end
 
-        reaper.ShowConsoleMsg(
-          ("  Bus created: \"%s\"\n"):format(bus_name))
-        n_buses = n_buses + 1
+          reaper.ShowConsoleMsg(
+            ("  Bus created: \"%s\"\n"):format(bus_name))
+          n_buses = n_buses + 1
+        end
       end
     end
+
+    ::next_group::
   end
 
   -- ── Restore state ─────────────────────────────────────────────────────

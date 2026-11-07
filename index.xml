@@ -16,9 +16,9 @@
 
   <category name="Track">
     <reapack name="Suno_01_MetadataOrganizer" type="script" desc="Scan tracks, parse Suno AI filenames, rename tracks, assign colors, and tag metadata">
-      <version name="1.0.1" author="Scott Mills" time="2026-06-03T12:00:00Z">
-        <changelog><![CDATA[+ Fix Suno ID detection: replace invalid Lua {8,32} pattern with validated %%w+ match
-+ Fix stem label casing: remove redundant :upper() that prevented title-case display]]></changelog>
+      <version name="1.0.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
+        <changelog><![CDATA[+ Fix stem detection when a Suno ID suffix is present (strip ID before stem match)
++ 1.0.1: Fix Suno ID detection: replace invalid Lua {8,32} pattern with validated %%w+ match; fix stem label casing]]></changelog>
         <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_01_MetadataOrganizer.lua</source>
       </version>
     </reapack>
@@ -53,18 +53,22 @@
 
   <category name="Track">
     <reapack name="Suno_05_StemAligner" type="script" desc="Organise third-party stem separations (UVR5, Demucs, Fadr) into a mix-ready layout">
-      <version name="1.0.1" author="Scott Mills" time="2026-06-03T12:00:00Z">
-        <changelog><![CDATA[+ Fix Suno ID stripping: replace invalid Lua {8,32} pattern with validated %%w+ match]]></changelog>
+      <version name="1.0.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
+        <changelog><![CDATA[+ Fix song-name extraction: validate Suno ID length on the ID itself; strip stem suffix after ID removal
++ Folder/bus track indices from live track numbers (safe for interleaved groups); nil-check track creation
++ 1.0.1: Fix Suno ID stripping pattern]]></changelog>
         <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_05_StemAligner.lua</source>
       </version>
     </reapack>
   </category>
 
   <category name="Track">
-    <reapack name="SGM SunoWorkflow Bundle" type="script" desc="SGM Studios Suno AI Workflow Suite: five-script pipeline for importing and preparing Suno AI tracks">
-      <version name="1.1.1" author="Scott Mills" time="2026-06-03T12:00:00Z">
-        <changelog><![CDATA[+ Suno_01_MetadataOrganizer 1.0.1: fix Suno ID detection + stem label casing
-+ Suno_05_StemAligner 1.0.1: fix Suno ID stripping pattern]]></changelog>
+    <reapack name="SGM SunoWorkflow Bundle" type="script" desc="SGM Studios Suno AI Workflow Suite: six-script pipeline for importing and preparing Suno AI tracks">
+      <version name="1.1.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
+        <changelog><![CDATA[+ Fix @provides path for ZIP importer (Various/SGM_Suno ZIP Importer.lua)
++ SGM_Suno ZIP Importer 1.1.1: zip-slip guard + nil-safe track creation
++ Suno_01_MetadataOrganizer 1.0.2: stem detection with Suno ID suffix
++ Suno_05_StemAligner 1.0.2: song-name extraction + folder/bus indexing fixes]]></changelog>
         <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/SGM_SunoWorkflow_Bundle.lua</source>
       </version>
     </reapack>

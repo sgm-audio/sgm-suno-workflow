@@ -1,4 +1,4 @@
--- @description Batch-normalise selected Suno items to a target integrated loudness level
+-- @description Batch-normalise selected Suno items to a target loudness level (RMS estimate)
 -- @author Scott Mills
 -- @version 1.0.0
 -- @changelog
@@ -60,9 +60,8 @@
     Method:
       1. Fetch peak data from REAPER's peak cache at 100 Hz resolution.
       2. Compute an RMS estimate:  RMS ≈ sqrt( mean(peak²) ).
-         This is a peak-RMS approximation (not true K-weighted LUFS), but for
-         full-mix material it tracks within ~1–2 dB of true LUFS and requires
-         no external DSP plugin.
+         This is a peak-RMS approximation, not true K-weighted LUFS.
+         Verify the result with a real loudness meter.
       3. Convert to dBFS: measured_dBFS = 20 × log10(RMS).
       4. Gain required: Δ dB = target_dBFS − measured_dBFS.
       5. Apply via the item's D_VOL property (linear gain, compounded with any

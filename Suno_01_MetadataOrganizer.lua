@@ -29,7 +29,7 @@
 --
 --   **Prerequisites:**
 --   - REAPER 6.70+ (no external extensions required)
---   - Run after Suno_ZIP_Importer (tracks with media items present)
+--   - Run after SGM_Suno ZIP Importer (tracks with media items present)
 --
 --   **Filename conventions understood:**
 --   - "My Song_abc123def456.wav"       → title "My Song"

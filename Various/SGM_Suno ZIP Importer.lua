@@ -35,9 +35,9 @@
 --   3. Select the ZIP file
 --   4. Watch the progress window — tracks are created with markers and lyrics
 --
---   **Configuration (edit at top of script):**
---   - IMPORT_LYRICS = true — set to false to skip lyric markers
---   - CREATE_FOLDER_TRACK = true — set to false to skip folder track
+--   **Configuration:** none — lyrics markers and the folder track are always
+--   created when the data is present. ZIP member paths are validated before
+--   extraction (v1.1.1 zip-slip guard).
 --
 --   **Limitations:**
 --   - Requires ReaImGui (script errors gracefully without it)

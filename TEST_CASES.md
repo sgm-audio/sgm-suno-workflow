@@ -8,22 +8,22 @@
 
 ---
 
-## Suno_ZIP_Importer
+## SGM_Suno ZIP Importer
 
 ### TC-ZIP-01: Import a valid Suno ZIP
 - **Prerequisites**: A valid Suno ZIP file with at least one WAV + metadata. ReaImGui installed.
 - **Steps**:
   1. Create new empty REAPER project
-  2. Run Suno_ZIP_Importer
+  2. Run SGM_Suno ZIP Importer
   3. Select the Suno ZIP file in the file dialog
   4. Wait for extraction to complete
-- **Expected Result**: All WAV files imported onto separate tracks. Region markers created from filenames. Lyrics markers created (if lyrics present).
+- **Expected Result**: Audio files imported onto stem tracks inside a color-coded folder track. Structural markers placed from lyrics tags. Lyrics saved to Project Notes (if lyrics present). A malicious ZIP (e.g. with ../ paths) is rejected before extraction.
 - **Pass**: [ ] / [ ]
 
 ### TC-ZIP-02: Handle corrupt or invalid ZIP
 - **Prerequisites**: A corrupted ZIP file (rename a .txt to .zip, or truncate a real ZIP).
 - **Steps**:
-  1. Run Suno_ZIP_Importer
+  1. Run SGM_Suno ZIP Importer
   2. Select the corrupt ZIP
 - **Expected Result**: Script shows an error message and does NOT crash REAPER. No orphan tracks created.
 - **Pass**: [ ] / [ ]
@@ -31,25 +31,25 @@
 ### TC-ZIP-03: Run without ReaImGui
 - **Prerequisites**: ReaImGui NOT installed.
 - **Steps**:
-  1. Run Suno_ZIP_Importer
+  1. Run SGM_Suno ZIP Importer
 - **Expected Result**: Script errors gracefully with a message about missing ReaImGui dependency (not a Lua error trace).
 - **Pass**: [ ] / [ ]
 
 ### TC-ZIP-04: Import ZIP with lyrics
 - **Prerequisites**: Suno ZIP that includes lyrics metadata.
 - **Steps**:
-  1. Run Suno_ZIP_Importer
+  1. Run SGM_Suno ZIP Importer
   2. Select the ZIP
   3. After import, inspect project markers
 - **Expected Result**: Lyrics text appears as project markers (View → Project markers).
 - **Pass**: [ ] / [ ]
 
 ### TC-ZIP-05: Import ZIP without lyrics
-- **Prerequisites**: Suno ZIP with no lyrics (or disable `IMPORT_LYRICS = false` at top of script).
+- **Prerequisites**: Suno ZIP with no lyrics in info.json.
 - **Steps**:
-  1. Run Suno_ZIP_Importer
+  1. Run SGM_Suno ZIP Importer
   2. Select the no-lyrics ZIP
-- **Expected Result**: WAV files import correctly. No lyric markers created. No errors.
+- **Expected Result**: Audio files import correctly. No lyric markers or notes added. No errors.
 - **Pass**: [ ] / [ ]
 
 ---
@@ -111,7 +111,7 @@
 - **Steps**:
   1. Run Suno_02_TempoMapper
   2. Check project markers
-- **Expected Result**: A guard marker placed after the last item/extremity of the project.
+- **Expected Result**: A guard tempo marker placed just past the end of the analysed item (only when more content follows it in the project).
 - **Pass**: [ ] / [ ]
 
 ### TC-TM-04: Run on silent audio

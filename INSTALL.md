@@ -5,7 +5,7 @@
 1. Open REAPER → **Extensions** → **ReaPack** → **Import repositories**
 2. Copy and paste this URL:
    ```
-   https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/index.xml
+   https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/index.xml
    ```
 3. Click **Import** → **OK**
 4. Go to **Extensions** → **ReaPack** → **Browse packages**

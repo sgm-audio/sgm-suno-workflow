@@ -1,5 +1,10 @@
 # Suno AI Workflow Suite — Changelog
 
+## 1.1.3 (2026-11-06)
+- **Suno_01_MetadataOrganizer v1.0.2**: Fix stem detection when a Suno ID suffix is present (ID is now stripped before stem matching)
+- **Suno_05_StemAligner v1.0.2**: Fix song-name extraction (Suno ID length validated on the ID, stem stripped after ID removal); folder/bus track indices computed from live track numbers (safe for interleaved groups); nil-check track creation
+- **Bundle v1.1.2**: Fix `@provides` path for the ZIP importer (`Various/SGM_Suno ZIP Importer.lua`)
+
 ## 1.1.2 (2026-11-06)
 - **Suno ZIP Importer v1.1.1**: Validate all ZIP member paths before extraction — rejects absolute paths, drive letters, and `..` segments (zip-slip / path-traversal guard); fails closed if the archive can't be listed
 - **Suno ZIP Importer v1.1.1**: Nil-guard folder track and per-stem tracks so a failed `InsertTrackAtIndex` can no longer crash REAPER (undo block is always balanced)
@@ -10,7 +15,7 @@
 - **Suno_01_MetadataOrganizer v1.0.1**: Fixed Suno ID regex detection (invalid `{8,32}` Lua pattern → `%w+` with length validation 8–32)
 - **Suno_01_MetadataOrganizer v1.0.1**: Fixed stem label casing (removed erroneous `:upper()` call that broke `:gsub`)
 - **Suno_05_StemAligner v1.0.1**: Fixed Suno ID stripping (same `{8,32}` pattern fix)
-- **Repository**: Reorganized into package folders; files moved to `Suno-Workflow-Suite/`
+- **Repository**: ZIP importer renamed to `Various/SGM_Suno ZIP Importer.lua`
 
 ## 1.1.0 (2026-05-28)
 - **Suno_ZIP_Importer v1.1.0**: Major update — replaced `os.execute` unzip with ReaImGui file dialog + progress window

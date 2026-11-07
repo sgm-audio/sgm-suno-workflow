@@ -1,8 +1,13 @@
--- @description SGM Studios Suno AI Workflow Suite: five-script pipeline for importing and preparing Suno AI tracks
+-- @description SGM Studios Suno AI Workflow Suite: six-script pipeline for importing and preparing Suno AI tracks
 -- @author Scott Mills
--- @version 1.1.1
+-- @version 1.1.2
 -- @metapackage
 -- @changelog
+--   1.1.2 (2026-11-06)
+--     + Fix @provides path for ZIP importer (moved to Various/SGM_Suno ZIP Importer.lua)
+--     + Suno_01_MetadataOrganizer 1.0.2: stem detection with Suno ID suffix
+--     + Suno_05_StemAligner 1.0.2: song-name extraction + folder/bus indexing fixes
+--     + SGM_Suno ZIP Importer 1.1.1: zip-slip guard + nil-safe track creation
 --   1.1.1 (2026-06-03)
 --     + Suno_01_MetadataOrganizer 1.0.1: fix Suno ID detection + stem label casing
 --     + Suno_05_StemAligner 1.0.1: fix Suno ID stripping pattern
@@ -10,7 +15,7 @@
 --     + Suno_ZIP_Importer updated to 1.1.0: ImGui window, lyrics markers, Project Notes
 --   1.0.0
 --     + Initial release of five-script pipeline
--- @provides [main] Suno_ZIP_Importer.lua
+-- @provides [main] Various/SGM_Suno ZIP Importer.lua
 -- @provides [main] Suno_01_MetadataOrganizer.lua
 -- @provides [main] Suno_02_TempoMapper.lua
 -- @provides [main] Suno_03_DynamicSplitter.lua
@@ -31,7 +36,7 @@ return "SGM Studios Bundle: Suno AI Workflow Suite"
 --   1. Suno_01_MetadataOrganizer — Rename tracks, strip Suno IDs, assign colors, create regions
 --   2. Suno_02_TempoMapper     — Detect BPM, set project tempo, guard marker at end
 --   3. Suno_03_DynamicSplitter — Split at structural boundaries (verse/chorus/bridge)
---   4. Suno_04_LoudnessMaster  — Batch-normalize items to -14 LUFS target
+--   4. Suno_04_LoudnessMaster  — Gain-normalize items to -18 dBFS RMS (≈ -14 LUFS)
 --   5. Suno_05_StemAligner     — Group stems by song, align, create folder/bus structure
 --
 --   **License:** MIT — free for personal and commercial use

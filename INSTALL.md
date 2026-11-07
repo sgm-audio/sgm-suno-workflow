@@ -22,7 +22,7 @@
    - Linux: `~/.config/REAPER/Scripts/SGM Studios/Suno-Workflow-Suite/`
 
    Copy ALL files from this folder:
-   - `Suno_ZIP_Importer.lua`
+   - `Various/SGM_Suno ZIP Importer.lua` (keep the `Various/` subfolder or place it flat — the script is standalone)
    - `Suno_01_MetadataOrganizer.lua`
    - `Suno_02_TempoMapper.lua`
    - `Suno_03_DynamicSplitter.lua`
@@ -30,7 +30,7 @@
    - `Suno_05_StemAligner.lua`
    - `SGM_SunoWorkflow_Bundle.lua` (optional — metapackage for ReaPack only)
 
-2. **Register the scripts** in REAPER:
+2. **Register the scripts** in REAPER (each `.lua` file, including the importer):
    - Open **Actions** → **Show action list** (press `?`)
    - Click **New action** → **Load ReaScript**
    - Navigate to each `.lua` file and select it
@@ -62,4 +62,4 @@
 | ZIP Importer won't open | Install ReaImGui via ReaPack |
 | "Error loading script" | Check for syntax errors with `luac -p filename.lua` |
 | Colors not applying | Script uses `ColorToNative` with `\| 0x1000000` flag — this is correct for REAPER 6+ |
-| Tempo detection wrong | Set `MANUAL_BPM = 0` to auto-detect, or set exact BPM value at top of script |
+| Tempo detection wrong | In the Suno_02_TempoMapper prompt, set "Override BPM" to 0 for auto-detect or an exact BPM value |

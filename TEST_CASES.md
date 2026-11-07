@@ -68,7 +68,7 @@
 - **Steps**:
   1. Run Suno_01_MetadataOrganizer
   2. Inspect track colors
-- **Expected Result**: Each track has a distinct color from the 20-color cycling palette. Colors visible in TCP and MCP.
+- **Expected Result**: Each track has a distinct color from the 12-color cycling palette. Colors visible in TCP and MCP.
 - **Pass**: [ ] / [ ]
 
 ### TC-MD-03: Region creation
@@ -76,14 +76,14 @@
 - **Steps**:
   1. Run Suno_01_MetadataOrganizer
   2. View Regions/Marker Manager
-- **Expected Result**: Named region markers created for each track, spanning the full project.
+- **Expected Result**: A named region is created for each media item, spanning that item (not the full project).
 - **Pass**: [ ] / [ ]
 
-### TC-MD-04: Suno ID stripping from filenames
-- **Prerequisites**: Tracks named like "MySong_a1b2c3d4e5f6g7h8_vocals.wav" (contains 16-char hex ID).
+### TC-MD-04: Suno ID stripping + stem detection
+- **Prerequisites**: Tracks named like "MySong_vocals_a1b2c3d4e5f6g7h8.wav" (stem before 16-char hex ID).
 - **Steps**:
   1. Run Suno_01_MetadataOrganizer
-- **Expected Result**: Track name becomes "MySong_vocals" — hex ID removed. IDs of lengths 8–32 chars are all handled.
+- **Expected Result**: Track renamed to "MySong [Vocals]" — hex ID (8–32 chars) removed AND stem suffix detected. IDs shorter than 8 chars are kept as part of the title.
 - **Pass**: [ ] / [ ]
 
 ---
@@ -99,9 +99,10 @@
 - **Pass**: [ ] / [ ]
 
 ### TC-TM-02: Manual BPM override
-- **Prerequisites**: Any project with audio. `MANUAL_BPM = 120` set at top of script.
+- **Prerequisites**: Any project with audio.
 - **Steps**:
   1. Run Suno_02_TempoMapper
+  2. Enter 120 in the "Override BPM" prompt
 - **Expected Result**: Project tempo set to exactly 120 BPM regardless of audio content.
 - **Pass**: [ ] / [ ]
 
@@ -172,7 +173,7 @@
 - **Steps**:
   1. Run Suno_04_LoudnessMaster
   2. Check item peaks
-- **Expected Result**: Maximum peak ≤ -1.0 dBTP (or whatever PEAK_CEILING is set to).
+- **Expected Result**: Sample peak (peak-cache) ≤ PEAK_CEILING (default -0.3 dBFS). Note: this is not true-peak (dBTP) — verify with a true-peak meter.
 - **Pass**: [ ] / [ ]
 
 ### TC-LM-03: Run on already-normalized item
@@ -217,10 +218,10 @@
 - **Pass**: [ ] / [ ]
 
 ### TC-SA-04: Single-track group
-- **Prerequisites**: A song with only one stem (e.g., "SongA_master.wav").
+- **Prerequisites**: A song with only one stem (e.g., "SongA_vocals.wav").
 - **Steps**:
   1. Run Suno_05_StemAligner
-- **Expected Result**: Single-stem group still creates a folder track for consistency. No alignment change needed. No errors.
+- **Expected Result**: Single-stem groups are skipped (nothing to align); no folder created for them; no errors.
 - **Pass**: [ ] / [ ]
 
 ---

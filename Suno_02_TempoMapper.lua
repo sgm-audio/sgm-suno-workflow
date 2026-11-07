@@ -13,7 +13,7 @@
 --   Detects the BPM of a Suno audio item and sets the project tempo.
 --
 --   **What it does:**
---   Analyses the first audio item on the selected track to estimate its BPM
+--   Analyses the selected audio item to estimate its BPM
 --   using an RMS-onset detection algorithm, then inserts a REAPER tempo marker
 --   at the item start so the project grid aligns with the music. Also places
 --   a guard marker at the end of the arrangement.
@@ -37,13 +37,13 @@
 --   4. Check the console for the detected BPM value
 --
 --   **Configuration (edit at top of script):**
---   - MANUAL_BPM = 0: auto-detect. Set to, e.g., 128 to force that BPM.
---   - DETECTION_SENSITIVITY = 4.0: higher = more sensitive onset detection
+--   - Override BPM: 0 = auto-detect; set to e.g. 128 to force that BPM (prompted at run time)
+--   - Onset sensitivity: 0.1 = loose, 1.0 = strict (prompted at run time, default 0.35)
 --
 --   **Limitations:**
 --   - Works best on full-mix audio with clear rhythmic content
 --   - Sparse or ambient material may produce inaccurate detection
---   - Use MANUAL_BPM override for material with ambiguous tempo
+--   - Use the Override BPM prompt for material with ambiguous tempo
 --[[============================================================================
   SCRIPT : Suno Tempo Mapper
   AUTHOR : TrackClear / SGM Studios

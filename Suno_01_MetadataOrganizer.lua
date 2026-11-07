@@ -1,7 +1,9 @@
 -- @description Scan tracks, parse Suno AI filenames, rename tracks, assign colors, and tag metadata
 -- @author Scott Mills
--- @version 1.0.1
+-- @version 1.0.2
 -- @changelog
+--   1.0.2 (2026-11-06)
+--     + Fix stem detection when a Suno ID suffix is present (strip ID before stem match)
 --   1.0.1 (2026-06-03)
 --     + Fix Suno ID detection: replace invalid Lua {8,32} pattern with validated %w+ match
 --     + Fix stem label casing: remove redundant :upper() that prevented title-case display
@@ -22,7 +24,7 @@
 --   the first media item on each track, then:
 --   - Renames tracks to the extracted song title
 --   - Strips Suno hex IDs (8-32 character hashes) from track names
---   - Assigns a 20-color cycling palette for visual distinction
+--   - Assigns a 12-color cycling palette for visual distinction
 --   - Creates named region markers spanning the project
 --
 --   **Prerequisites:**
@@ -41,17 +43,16 @@
 --   3. Check the console for a summary of changes
 --
 --   **Configuration (edit at top of script):**
---   - SONG_PALETTE: 20-color cycling palette (edit RGB values)
+--   - SONG_PALETTE: 12-color cycling palette (edit RGB values)
 --   - CREATE_REGIONS = true: set to false to skip region creation
 --
 --   **Known edge cases:**
 --   - Tracks without Suno-style filenames keep their original names
---   - Very long filenames (>100 chars) are truncated gracefully
---   - Runs on ALL tracks — deselect tracks you don't want processed
+--   - Scope is chosen in the prompt (all tracks vs selected tracks only)
 --[[============================================================================
   SCRIPT : Suno Metadata Organizer
   AUTHOR : TrackClear / SGM Studios
-  VERSION: 1.0.0
+  VERSION: 1.0.2
 
   DESCRIPTION:
     Scans tracks in the current project, parses Suno AI filename conventions
@@ -71,7 +72,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Metadata Organizer"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.2"
 
 -- ─── COLOR PALETTE ──────────────────────────────────────────────────────────
 
@@ -134,9 +135,18 @@ local function parse_suno_filename(raw_path)
   -- Strip extension
   local name = filename:match("^(.+)%.[^%.]+$") or filename
 
-  -- Detect stem suffix before stripping the Suno ID
+  -- Split off the trailing Suno ID FIRST (last _XXXXXXXX segment).
+  -- Suno IDs are 8–32 alphanumeric characters.
+  -- Lua patterns don't support {n,m} quantifiers; we match loosely
+  -- and validate length in code.
+  local song_part, id_part = name:match("^(.-)_(%w+)$")
+  if not id_part or #id_part < 8 or #id_part > 32 then
+    song_part, id_part = name, nil  -- not a Suno ID — keep whole name
+  end
+
+  -- Detect stem suffix at the end of the remaining (ID-stripped) name
   local stem_type = nil
-  local name_lower = name:lower()
+  local name_lower = song_part:lower()
   for _, rule in ipairs(STEM_RULES) do
     -- Match at word boundary / end of string
     if name_lower:match("[%s_%(%-]" .. rule.pattern .. "$")
@@ -144,21 +154,12 @@ local function parse_suno_filename(raw_path)
       stem_type = rule.name
       -- Remove the stem part and any trailing separator
       local stem_start = name_lower:find("[%s_%(%-]?" .. rule.pattern .. "$")
-      if stem_start then name = trim(name:sub(1, stem_start - 1)) end
+      if stem_start then song_part = trim(song_part:sub(1, stem_start - 1)) end
       break
     end
   end
 
-  -- Split on the LAST underscore to separate song name from Suno ID.
-  -- Suno IDs are 8–32 alphanumeric characters.
-  -- Lua patterns don't support {n,m} quantifiers; we match loosely
-  -- and validate length in code.
-  local song_part, id_part = name:match("^(.-)_(%w+)$")
-  if id_part and (#id_part < 8 or #id_part > 32) then
-    id_part = nil  -- too short/long to be a Suno ID
-  end
-
-  local song_name = trim((song_part or name):gsub("[_%-]+", " "))
+  local song_name = trim(song_part:gsub("[_%-]+", " "))
   local suno_id   = id_part or ""
 
   if song_name == "" then song_name = "Untitled" end

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <index version="1" name="SGM Studios - Suno AI Workflow Suite">
   <description>Six-script pipeline for importing, organizing, and mastering Suno AI audio in REAPER. Import ZIP files, rename/categorize tracks, detect BPM, split at structural boundaries, normalize loudness, and align stems — end to end, no coding required.</description>
-  <website>https://github.com/SGM-Studios/sgm-suno-workflow</website>
+  <website>https://github.com/sgm-audio/sgm-suno-workflow</website>
   <license>MIT</license>
 
   <category name="Import">
@@ -9,7 +9,7 @@
       <version name="1.1.1" author="Scott Mills" time="2026-11-06T12:00:00Z">
         <changelog><![CDATA[+ Validate every ZIP member path before extraction (zip-slip / path-traversal guard; fails closed)
 + Nil-guard folder track and stem tracks so failures can't crash REAPER]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Various/SGM_Suno%20ZIP%20Importer.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Various/SGM_Suno%20ZIP%20Importer.lua</source>
       </version>
     </reapack>
   </category>
@@ -19,7 +19,7 @@
       <version name="1.0.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
         <changelog><![CDATA[+ Fix stem detection when a Suno ID suffix is present (strip ID before stem match)
 + 1.0.1: Fix Suno ID detection: replace invalid Lua {8,32} pattern with validated %%w+ match; fix stem label casing]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_01_MetadataOrganizer.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_01_MetadataOrganizer.lua</source>
       </version>
     </reapack>
   </category>
@@ -28,7 +28,7 @@
     <reapack name="Suno_02_TempoMapper" type="script" desc="Analyse a selected Suno audio item, estimate BPM, and insert a REAPER tempo marker">
       <version name="1.0.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
         <changelog><![CDATA[+ Initial release: RMS-onset BPM detection + guard marker + manual override]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_02_TempoMapper.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_02_TempoMapper.lua</source>
       </version>
     </reapack>
   </category>
@@ -37,7 +37,7 @@
     <reapack name="Suno_03_DynamicSplitter" type="script" desc="Split Suno audio items at structural boundaries (verse/chorus/bridge) using energy contrast">
       <version name="1.0.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
         <changelog><![CDATA[+ Initial release: long-window energy contrast structural detection + right-to-left splitting]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_03_DynamicSplitter.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_03_DynamicSplitter.lua</source>
       </version>
     </reapack>
   </category>
@@ -46,7 +46,7 @@
     <reapack name="Suno_04_LoudnessMaster" type="script" desc="Batch-normalise selected Suno items to a target integrated loudness level">
       <version name="1.0.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
         <changelog><![CDATA[+ Initial release: peak-RMS loudness measurement + batch normalisation to target LUFS]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_04_LoudnessMaster.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_04_LoudnessMaster.lua</source>
       </version>
     </reapack>
   </category>
@@ -57,7 +57,7 @@
         <changelog><![CDATA[+ Fix song-name extraction: validate Suno ID length on the ID itself; strip stem suffix after ID removal
 + Folder/bus track indices from live track numbers (safe for interleaved groups); nil-check track creation
 + 1.0.1: Fix Suno ID stripping pattern]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/Suno_05_StemAligner.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_05_StemAligner.lua</source>
       </version>
     </reapack>
   </category>
@@ -69,7 +69,7 @@
 + SGM_Suno ZIP Importer 1.1.1: zip-slip guard + nil-safe track creation
 + Suno_01_MetadataOrganizer 1.0.2: stem detection with Suno ID suffix
 + Suno_05_StemAligner 1.0.2: song-name extraction + folder/bus indexing fixes]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/SGM-Studios/sgm-suno-workflow/main/SGM_SunoWorkflow_Bundle.lua</source>
+        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/SGM_SunoWorkflow_Bundle.lua</source>
       </version>
     </reapack>
   </category>

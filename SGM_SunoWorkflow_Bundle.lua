@@ -32,7 +32,7 @@ return "SGM Studios Bundle: Suno AI Workflow Suite"
 --   **Requirements:** REAPER 7.0+, ReaImGui (for ZIP Importer), SWS Extension (recommended)
 --
 --   **Run in this order:**
---   0. Suno_ZIP_Importer       — Import ZIP, parse metadata, create tracks + markers
+--   0. SGM_Suno ZIP Importer   — Import ZIP, parse metadata, create tracks + markers
 --   1. Suno_01_MetadataOrganizer — Rename tracks, strip Suno IDs, assign colors, create regions
 --   2. Suno_02_TempoMapper     — Detect BPM, set project tempo, guard marker at end
 --   3. Suno_03_DynamicSplitter — Split at structural boundaries (verse/chorus/bridge)

@@ -5,57 +5,83 @@
   <license>MIT</license>
 
   <category name="Import">
-    <reapack name="SGM_Suno ZIP Importer" type="script" desc="Import a Suno AI ZIP file: unzip, parse metadata, create color-coded session with lyrics markers">
-      <version name="1.1.1" author="Scott Mills" time="2026-11-06T12:00:00Z">
-        <changelog><![CDATA[+ Validate every ZIP member path before extraction (zip-slip / path-traversal guard; fails closed)
-+ Nil-guard folder track and stem tracks so failures can't crash REAPER]]></changelog>
+    <reapack name="SGM_Suno ZIP Importer.lua" type="script" desc="Import a Suno AI ZIP file: unzip, parse metadata, create color-coded session with lyrics markers">
+      <version name="1.1.2" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ Fix crash on import: reaper.GetTempPath() is not a REAPER API function
++ Quote every shell path (single-quote escaping) so a ZIP filename can never inject commands
++ Sanitise the temp folder name derived from the ZIP filename
++ Decode \uXXXX escapes in info.json; only accept string values
++ Accept .m4a/.flac/.ogg/.opus/.aif(f) audio as well as .mp3/.wav
++ Always clean the temp folder, including on error paths
++ 1.1.1: Validate every ZIP member path before extraction (zip-slip guard; fails closed); nil-guard track creation]]></changelog>
         <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Various/SGM_Suno%20ZIP%20Importer.lua</source>
       </version>
     </reapack>
   </category>
 
   <category name="Track">
-    <reapack name="Suno_01_MetadataOrganizer" type="script" desc="Scan tracks, parse Suno AI filenames, rename tracks, assign colors, and tag metadata">
-      <version name="1.0.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
-        <changelog><![CDATA[+ Fix stem detection when a Suno ID suffix is present (strip ID before stem match)
-+ 1.0.1: Fix Suno ID detection: replace invalid Lua {8,32} pattern with validated %%w+ match; fix stem label casing]]></changelog>
+    <reapack name="Suno_01_MetadataOrganizer.lua" type="script" desc="Scan tracks, parse Suno AI filenames, rename tracks, assign colors, and tag metadata">
+      <version name="1.0.3" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ Strip a Suno ID that sits before the stem suffix ("Song_<id>_vocals")
++ Create one region per song span instead of one per stem track
++ Robust option parsing (empty fields no longer shift the other options)
++ 1.0.2: Fix stem detection when a Suno ID suffix is present
++ 1.0.1: Fix Suno ID detection (invalid {8,32} Lua pattern → validated %w+ match); fix stem label casing]]></changelog>
         <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_01_MetadataOrganizer.lua</source>
       </version>
     </reapack>
   </category>
 
   <category name="Tempo">
-    <reapack name="Suno_02_TempoMapper" type="script" desc="Analyse a selected Suno audio item, estimate BPM, and insert a REAPER tempo marker">
-      <version name="1.0.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
-        <changelog><![CDATA[+ Initial release: RMS-onset BPM detection + guard marker + manual override]]></changelog>
+    <reapack name="Suno_02_TempoMapper.lua" type="script" desc="Analyse a selected Suno audio item, estimate BPM, and insert a REAPER tempo marker">
+      <version name="1.0.1" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ Fix peak-cache call: the API function is GetMediaItemTake_Peaks (MediaItemTake_GetPeaks does not exist)
++ Fix peak buffer layout (maximums block, then minimums block, interleaved per channel)
++ Fix peak start time: project time, not 0 (items away from 0 s analysed the wrong audio)
++ Mask the bit-packed return value (sample count lives in the low 20 bits)
++ Guard marker now restores the previous project tempo instead of repeating the new one
++ Use SetTempoTimeSigMarker (AddTempoTimeSigMarker is deprecated)
++ Robust parameter parsing
++ 1.0.0: Initial release]]></changelog>
         <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_02_TempoMapper.lua</source>
       </version>
     </reapack>
   </category>
 
   <category name="Editing">
-    <reapack name="Suno_03_DynamicSplitter" type="script" desc="Split Suno audio items at structural boundaries (verse/chorus/bridge) using energy contrast">
-      <version name="1.0.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
-        <changelog><![CDATA[+ Initial release: long-window energy contrast structural detection + right-to-left splitting]]></changelog>
+    <reapack name="Suno_03_DynamicSplitter.lua" type="script" desc="Split Suno audio items at structural boundaries (verse/chorus/bridge) using energy contrast">
+      <version name="1.0.1" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ Fix peak-cache call: the API function is GetMediaItemTake_Peaks (MediaItemTake_GetPeaks does not exist)
++ Fix peak buffer layout, project-time start offset and bit-packed return value
++ Fix inverted sensitivity: lower values now split more, as documented
++ Robust parameter parsing
++ 1.0.0: Initial release]]></changelog>
         <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_03_DynamicSplitter.lua</source>
       </version>
     </reapack>
   </category>
 
   <category name="Editing">
-    <reapack name="Suno_04_LoudnessMaster" type="script" desc="Batch-normalise selected Suno items to a target integrated loudness level">
-      <version name="1.0.0" author="Scott Mills" time="2026-05-23T12:00:00Z">
-        <changelog><![CDATA[+ Initial release: peak-RMS loudness measurement + batch normalisation to target LUFS]]></changelog>
+    <reapack name="Suno_04_LoudnessMaster.lua" type="script" desc="Batch-normalise selected Suno items to a target dBFS RMS level with a peak ceiling">
+      <version name="1.0.1" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ Measure real samples via GetAudioAccessorSamples instead of guessing RMS from the peak cache
++ Peak-cache path kept as a fallback, with the correct API name, start time and return masking
++ True sample peak (max of |max| and |min|) for the ceiling check
++ Robust parameter parsing
++ 1.0.0: Initial release]]></changelog>
         <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_04_LoudnessMaster.lua</source>
       </version>
     </reapack>
   </category>
 
   <category name="Track">
-    <reapack name="Suno_05_StemAligner" type="script" desc="Organise third-party stem separations (UVR5, Demucs, Fadr) into a mix-ready layout">
-      <version name="1.0.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
-        <changelog><![CDATA[+ Fix song-name extraction: validate Suno ID length on the ID itself; strip stem suffix after ID removal
-+ Folder/bus track indices from live track numbers (safe for interleaved groups); nil-check track creation
+    <reapack name="Suno_05_StemAligner.lua" type="script" desc="Organise third-party stem separations (UVR5, Demucs, Fadr) into a mix-ready layout">
+      <version name="1.0.3" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ Bus is created even when folder creation is disabled
++ Never wrap other songs' tracks: folder creation is skipped when a group's tracks are not adjacent
++ Never corrupt an existing folder hierarchy
++ Guard against a failed CreateTrackSend
++ 1.0.2: Fix song-name extraction; folder/bus indices from live track numbers
 + 1.0.1: Fix Suno ID stripping pattern]]></changelog>
         <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_05_StemAligner.lua</source>
       </version>
@@ -63,13 +89,24 @@
   </category>
 
   <category name="Track">
-    <reapack name="SGM SunoWorkflow Bundle" type="script" desc="SGM Studios Suno AI Workflow Suite: six-script pipeline for importing and preparing Suno AI tracks">
-      <version name="1.1.2" author="Scott Mills" time="2026-11-06T12:00:00Z">
-        <changelog><![CDATA[+ Fix @provides path for ZIP importer (Various/SGM_Suno ZIP Importer.lua)
-+ SGM_Suno ZIP Importer 1.1.1: zip-slip guard + nil-safe track creation
-+ Suno_01_MetadataOrganizer 1.0.2: stem detection with Suno ID suffix
-+ Suno_05_StemAligner 1.0.2: song-name extraction + folder/bus indexing fixes]]></changelog>
-        <source main="main">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/SGM_SunoWorkflow_Bundle.lua</source>
+    <reapack name="SGM_SunoWorkflow_Bundle.lua" type="script" desc="SGM Studios Suno AI Workflow Suite: six-script pipeline for importing and preparing Suno AI tracks">
+      <version name="1.2.0" author="Scott Mills" time="2026-11-13T12:00:00Z">
+        <changelog><![CDATA[+ 2026-11-13 audit release: fixes to every script in the suite
++ Fix @provides paths by declaring every provided file as a source of this package
++ SGM_Suno ZIP Importer 1.1.2: GetTempPath crash, shell quoting, JSON unicode
++ Suno_01_MetadataOrganizer 1.0.3: ID before stem, one region per song
++ Suno_02_TempoMapper 1.0.1: peak API, project-time peaks, meaningful guard marker
++ Suno_03_DynamicSplitter 1.0.1: peak API, inverted sensitivity
++ Suno_04_LoudnessMaster 1.0.1: real sample measurement
++ Suno_05_StemAligner 1.0.3: bus without folder, folder safety
++ 1.1.2: Fix @provides path for ZIP importer]]></changelog>
+        <source main="main" file="SGM_SunoWorkflow_Bundle.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/SGM_SunoWorkflow_Bundle.lua</source>
+        <source main="main" file="Various/SGM_Suno ZIP Importer.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Various/SGM_Suno%20ZIP%20Importer.lua</source>
+        <source main="main" file="Suno_01_MetadataOrganizer.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_01_MetadataOrganizer.lua</source>
+        <source main="main" file="Suno_02_TempoMapper.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_02_TempoMapper.lua</source>
+        <source main="main" file="Suno_03_DynamicSplitter.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_03_DynamicSplitter.lua</source>
+        <source main="main" file="Suno_04_LoudnessMaster.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_04_LoudnessMaster.lua</source>
+        <source main="main" file="Suno_05_StemAligner.lua">https://raw.githubusercontent.com/sgm-audio/sgm-suno-workflow/main/Suno_05_StemAligner.lua</source>
       </version>
     </reapack>
   </category>

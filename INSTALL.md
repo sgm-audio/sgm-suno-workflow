@@ -37,9 +37,10 @@
    - Each script now appears in the Actions list
 
 3. **Install dependencies**:
-   - **ReaImGui** (required for ZIP Importer):
+   - **ReaImGui 0.9 or newer** (required for ZIP Importer):
      - Extensions → ReaPack → Browse packages → Search "ReaImGui" → Install
      - Or download from: https://github.com/cfillion/reaimgui
+     - The importer calls the flag enums as functions (`ImGui_WindowFlags_NoCollapse()`), which 0.9+ provides.
    - **SWS Extension** (recommended):
      - Download from: https://www.sws-extension.org/
    - **7-Zip** (Windows, recommended for ZIP extraction):
@@ -54,12 +55,29 @@
 4. Run any script (requires a project with audio to do something useful)
 5. Check the REAPER console (View → Console) for output
 
+> **Upgrading from 1.1.x:** the ReaPack package names in `index.xml` now include
+> the `.lua` extension. If you installed the old builds you may still have
+> extension-less files (e.g. `Suno_01_MetadataOrganizer`) in
+> `Scripts/SGM Studios - Suno AI Workflow Suite/Script/`. They cannot be loaded by
+> REAPER — delete them and install again.
+
+## Verifying the scripts themselves (developers)
+
+No REAPER install is required:
+
+```bash
+lua5.4 tests/run_tests.lua          # static checks + behaviour against a mock API
+python3 tools/run_lua.py            # same, using an embedded Lua (pip install lupa)
+python3 tools/lua_lint.py *.lua "Various/SGM_Suno ZIP Importer.lua"
+```
+
 ## Troubleshooting
 
 | Symptom | Solution |
 |---------|----------|
 | Script not found in Actions | Check the file is in the correct folder, run **Actions → Re-scan** |
 | ZIP Importer won't open | Install ReaImGui via ReaPack |
-| "Error loading script" | Check for syntax errors with `luac -p filename.lua` |
-| Colors not applying | Script uses `ColorToNative` with `\| 0x1000000` flag — this is correct for REAPER 6+ |
+| "Error loading script" | Check for syntax errors with `luac -p filename.lua` and run `python3 tools/lua_lint.py` |
+| Colors not applying | Script uses `ColorToNative` with the `0x1000000` flag — this is correct for REAPER 6+ |
+| "attempt to call a nil value" | A REAPER API function is missing (usually an old REAPER build or a missing extension). Check the console line number. |
 | Tempo detection wrong | In the Suno_02_TempoMapper prompt, set "Override BPM" to 0 for auto-detect or an exact BPM value |

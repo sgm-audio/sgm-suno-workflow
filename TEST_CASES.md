@@ -1,6 +1,11 @@
 # Suno AI Workflow Suite — Test Cases
 
 > **Instructions**: Run each test case manually in REAPER. Mark `[x]` for pass, `[ ]` for fail. Note the REAPER version and script versions tested.
+>
+> **Automated coverage**: most cases below are also exercised offline by
+> `tests/run_tests.lua` against a mock of the ReaScript API (223 assertions).
+> Where a case has an automated counterpart it is named in the case, so a manual
+> run is only needed to confirm real-REAPER behaviour (audio, UI, filesystem).
 
 **Tester**: \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 **Date**: \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
@@ -17,7 +22,7 @@
   2. Run SGM_Suno ZIP Importer
   3. Select the Suno ZIP file in the file dialog
   4. Wait for extraction to complete
-- **Expected Result**: Audio files imported onto stem tracks inside a color-coded folder track. Structural markers placed from lyrics tags. Lyrics saved to Project Notes (if lyrics present). A malicious ZIP (e.g. with ../ paths) is rejected before extraction.
+- **Expected Result**: Audio files imported onto stem tracks inside a color-coded folder track (folder depth balanced — no dangling open folder). Structural markers placed from lyrics tags. Lyrics saved to Project Notes (if lyrics present). A malicious ZIP (e.g. with `../` paths, absolute paths or drive letters) is rejected before extraction. *(automated: test_zip_importer)*
 - **Pass**: [ ] / [ ]
 
 ### TC-ZIP-02: Handle corrupt or invalid ZIP
@@ -28,7 +33,7 @@
 - **Expected Result**: Script shows an error message and does NOT crash REAPER. No orphan tracks created.
 - **Pass**: [ ] / [ ]
 
-### TC-ZIP-03: Run without ReaImGui
+### TC-ZIP-03: Run without ReaImGui  *(automated: test_zip_importer)*
 - **Prerequisites**: ReaImGui NOT installed.
 - **Steps**:
   1. Run SGM_Suno ZIP Importer
@@ -50,6 +55,7 @@
   1. Run SGM_Suno ZIP Importer
   2. Select the no-lyrics ZIP
 - **Expected Result**: Audio files import correctly. No lyric markers or notes added. No errors.
+- **Also check**: a ZIP named with shell metacharacters (e.g. `$(whoami).zip`) imports normally and executes nothing; a ZIP containing `.m4a`/`.flac` stems imports them too.
 - **Pass**: [ ] / [ ]
 
 ---
@@ -76,14 +82,14 @@
 - **Steps**:
   1. Run Suno_01_MetadataOrganizer
   2. View Regions/Marker Manager
-- **Expected Result**: A named region is created for each media item, spanning that item (not the full project).
+- **Expected Result**: One named region per **song** span — a 4-stem import produces a single region, not four identical ones. Each region spans the item, not the full project. *(automated: test_01_metadata)*
 - **Pass**: [ ] / [ ]
 
 ### TC-MD-04: Suno ID stripping + stem detection
 - **Prerequisites**: Tracks named like "MySong_vocals_a1b2c3d4e5f6g7h8.wav" (stem before 16-char hex ID).
 - **Steps**:
   1. Run Suno_01_MetadataOrganizer
-- **Expected Result**: Track renamed to "MySong [Vocals]" — hex ID (8–32 chars) removed AND stem suffix detected. IDs shorter than 8 chars are kept as part of the title.
+- **Expected Result**: Track renamed to "MySong [Vocals]" — hex ID (8–32 chars) removed AND stem suffix detected. IDs shorter than 8 chars are kept as part of the title. The ID is also stripped when it precedes the stem (`MySong_<id>_vocals` → "MySong [Vocals]"). *(automated: test_01_metadata)*
 - **Pass**: [ ] / [ ]
 
 ---
@@ -103,7 +109,7 @@
 - **Steps**:
   1. Run Suno_02_TempoMapper
   2. Enter 120 in the "Override BPM" prompt
-- **Expected Result**: Project tempo set to exactly 120 BPM regardless of audio content.
+- **Expected Result**: Project tempo set to exactly 120 BPM regardless of audio content. *(automated: test_02_tempo)*
 - **Pass**: [ ] / [ ]
 
 ### TC-TM-03: Guard marker placement
@@ -111,14 +117,14 @@
 - **Steps**:
   1. Run Suno_02_TempoMapper
   2. Check project markers
-- **Expected Result**: A guard tempo marker placed just past the end of the analysed item (only when more content follows it in the project).
+- **Expected Result**: A guard tempo marker placed just past the end of the analysed item (only when more content follows it in the project) that **restores the tempo that was in force before the item** — not a repeat of the new BPM. *(automated: test_02_tempo)*
 - **Pass**: [ ] / [ ]
 
 ### TC-TM-04: Run on silent audio
 - **Prerequisites**: Project with silent or extremely quiet audio items.
 - **Steps**:
   1. Run Suno_02_TempoMapper
-- **Expected Result**: Script completes without error. BPM may be detected as very slow (silent RMS → fallback). No crash.
+- **Expected Result**: Script completes without error, logs that the audio is silent/too quiet to analyse, and asks for a BPM manually. No tempo marker is written unless you supply one. *(automated: test_02_tempo)*
 - **Pass**: [ ] / [ ]
 
 ---
@@ -136,9 +142,9 @@
 ### TC-DS-02: Sensitivity slider extremes
 - **Prerequisites**: Same as TC-DS-01.
 - **Steps**:
-  1. Run Suno_03_DynamicSplitter with very low sensitivity
-  2. Run again with very high sensitivity
-- **Expected Result**: Low sensitivity → fewer splits. High sensitivity → more splits. No crash at either extreme.
+  1. Run Suno_03_DynamicSplitter with very low sensitivity (0.1)
+  2. Run again with very high sensitivity (1.0)
+- **Expected Result**: Low sensitivity (loose) → **more** splits. High sensitivity (strict) → **fewer** splits. No crash at either extreme. *(automated: test_03_splitter)*
 - **Pass**: [ ] / [ ]
 
 ### TC-DS-03: Right-to-left split correctness
@@ -146,21 +152,21 @@
 - **Steps**:
   1. Run Suno_03_DynamicSplitter
   2. After split, check that all items are contiguous with no gaps and no overlaps
-- **Expected Result**: Total duration of split items = original item duration. No gaps between split items.
+- **Expected Result**: Total duration of split items = original item duration. No gaps or overlaps, and section names read Sec 01…N in timeline order. *(automated: test_03_splitter)*
 - **Pass**: [ ] / [ ]
 
 ### TC-DS-04: Run on very short item
 - **Prerequisites**: A very short audio item (< 1 second).
 - **Steps**:
   1. Run Suno_03_DynamicSplitter
-- **Expected Result**: Script handles gracefully — either one split at midpoint, or no split with console message. No crash.
+- **Expected Result**: Script reports that the item is too short to analyse and makes no changes. No crash. *(automated: test_03_splitter)*
 - **Pass**: [ ] / [ ]
 
 ---
 
 ## Suno_04_LoudnessMaster
 
-### TC-LM-01: Normalization to -14 LUFS
+### TC-LM-01: Normalization to -18 dBFS RMS (≈ -14 LUFS)
 - **Prerequisites**: An audio item with known loudness (e.g., a -20 LUFS file).
 - **Steps**:
   1. Run Suno_04_LoudnessMaster
@@ -173,7 +179,7 @@
 - **Steps**:
   1. Run Suno_04_LoudnessMaster
   2. Check item peaks
-- **Expected Result**: Sample peak (peak-cache) ≤ PEAK_CEILING (default -0.3 dBFS). Note: this is not true-peak (dBTP) — verify with a true-peak meter.
+- **Expected Result**: Sample peak ≤ PEAK_CEILING (default -0.3 dBFS) and the console shows a `LIMIT` line for that item. This is not true peak (dBTP) — verify with a true-peak meter. *(automated: test_04_loudness)*
 - **Pass**: [ ] / [ ]
 
 ### TC-LM-03: Run on already-normalized item
@@ -187,7 +193,7 @@
 - **Prerequisites**: A silent audio item.
 - **Steps**:
   1. Run Suno_04_LoudnessMaster
-- **Expected Result**: Script handles gracefully — gain may boost significantly (silent RMS → large gain), but no crash or NaN output.
+- **Expected Result**: The silent item is skipped and counted as failed; its volume is untouched (never boosted to infinity). No crash or NaN. *(automated: test_04_loudness)*
 - **Pass**: [ ] / [ ]
 
 ---
@@ -206,7 +212,7 @@
 - **Steps**:
   1. Run Suno_05_StemAligner
   2. Inspect item start times within each group
-- **Expected Result**: All items within a group start at the same time (aligned to first item start).
+- **Expected Result**: All items within a group start at the same time (aligned to the earliest item start). *(automated: test_05_stems)*
 - **Pass**: [ ] / [ ]
 
 ### TC-SA-03: Folder/bus creation
@@ -214,7 +220,7 @@
 - **Steps**:
   1. Run Suno_05_StemAligner
   2. Inspect track structure
-- **Expected Result**: Each stem group has a parent folder track. Optional: bus track created with sends from all tracks in group.
+- **Expected Result**: Each stem group has a parent folder track that is closed on its last stem, and a bus track with one post-fader send per stem. Folder depth sums to zero (no dangling folder). Disabling folders still creates the bus; interleaved groups are aligned but **not** folded (a console warning explains why). *(automated: test_05_stems)*
 - **Pass**: [ ] / [ ]
 
 ### TC-SA-04: Single-track group

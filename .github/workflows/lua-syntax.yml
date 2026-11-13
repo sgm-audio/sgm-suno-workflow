@@ -1,4 +1,4 @@
-name: Lua Syntax Check
+name: Lua checks
 
 on:
   push:
@@ -8,19 +8,30 @@ on:
   workflow_dispatch:
 
 jobs:
-  luacheck:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Lua
+
+      - name: Install Lua 5.4
         run: sudo apt-get update && sudo apt-get install -y lua5.4
-      - name: Syntax-check all Lua files
-        # What this checks: that every .lua file PARSES (luac -p).
-        # What this does NOT check: REAPER API usage, runtime behaviour,
-        # ReaPack index correctness. Those require manual review/testing.
+
+      - name: Syntax check every Lua file (luac -p)
         run: |
           set -e
-          for f in *.lua Various/*.lua; do
+          for f in *.lua Various/*.lua tests/*.lua; do
             echo "checking $f"
             luac5.4 -p "$f"
           done
+
+      - name: Lint (undefined globals, unused locals, deprecated API)
+        run: python3 tools/lua_lint.py *.lua Various/*.lua tests/*.lua
+
+      - name: Static + behaviour tests against a mocked REAPER API
+        # Covers, among other things:
+        #   * every reaper.<Name> call verified against the official API list
+        #     (tests/reaper_api_names.txt, generated from reaper-sdk)
+        #   * ReaPack index/package metadata consistency
+        #   * peak-cache, tempo, split, loudness, stem-grouping and ZIP import
+        #     behaviour, including their known failure modes
+        run: lua5.4 tests/run_tests.lua

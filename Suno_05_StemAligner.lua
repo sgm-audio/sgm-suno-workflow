@@ -1,7 +1,16 @@
 -- @description Organise third-party stem separations (UVR5, Demucs, Fadr) into a mix-ready layout
 -- @author Scott Mills
--- @version 1.0.2
+-- @version 1.0.3
 -- @changelog
+--   1.0.3 (2026-11-13)
+--     + Bus is created even when folder creation is disabled (it used to be
+--       silently skipped because it was nested inside the folder branch)
+--     + Never wrap other songs' tracks: folder creation is skipped (with a
+--       console warning) when a group's tracks are not adjacent
+--     + Never corrupt an existing folder hierarchy: groups whose tracks already
+--       have I_FOLDERDEPTH set are left alone
+--     + Guard against a failed CreateTrackSend (index -1)
+--     + Remove the unused parameter in extract_song_name
 --   1.0.2 (2026-11-06)
 --     + Fix song-name extraction: validate Suno ID length (not song part), strip stem after ID removal
 --     + Folder/bus indices now computed from live track numbers (safe for interleaved groups)
@@ -92,7 +101,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Stem Aligner"
-local SCRIPT_VERSION = "1.0.2"
+local SCRIPT_VERSION = "1.0.3"
 
 -- ─── STEM CLASSIFICATION ─────────────────────────────────────────────────────
 
@@ -163,7 +172,7 @@ end
 
 -- Extract the "song name" from a stem filename by stripping known stem suffixes
 -- and the trailing Suno ID (alphanumeric, 8–32 chars after the last underscore).
-local function extract_song_name(fname_lower, raw_fname)
+local function extract_song_name(raw_fname)
   local name = raw_fname  -- preserve original case for display
 
   -- Strip Suno ID FIRST (last _XXXXXXXX segment).
@@ -201,7 +210,7 @@ local function build_groups()
     local stem_label, stem_color = classify_stem(fname_lower)
     if not stem_label then goto next_track end  -- skip non-stem tracks
 
-    local song_name = extract_song_name(fname_lower, basename)
+    local song_name = extract_song_name(basename)
     local key       = song_name:lower()
 
     if not group_map[key] then
@@ -253,10 +262,13 @@ end
 
 -- ─── FOLDER + BUS CREATION ───────────────────────────────────────────────────
 
--- Create a send from src_track to dest_track.
--- Returns the send index on src_track.
-local function create_send(src_track, dest_track)
-  return reaper.CreateTrackSend(src_track, dest_track)
+-- Create a post-fader send from src_track to dest_track.
+-- Returns true on success (CreateTrackSend returns -1 on failure).
+local function create_post_fader_send(src_track, dest_track)
+  local idx = reaper.CreateTrackSend(src_track, dest_track)
+  if not idx or idx < 0 then return false end
+  reaper.SetTrackSendInfo_Value(src_track, 0, idx, "I_SENDMODE", 0)  -- 0 = post-fader
+  return true
 end
 
 -- ─── MAIN ────────────────────────────────────────────────────────────────────
@@ -338,67 +350,93 @@ local function Main()
       end
     end
 
-    -- ── Create folder track ─────────────────────────────────────────────
-    -- Strategy: find the track index of the first stem in this group,
-    -- insert the folder track immediately before it.
-    if do_folder then
-      -- Get current indices (may have shifted due to prior insertions).
-      -- Use the group's own tracks — never assume they are contiguous.
-      local min_idx = math.huge
-      local max_idx = -1
-      for _, entry in ipairs(group.tracks) do
-        local idx = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
+    -- ── Track indices (recomputed: earlier groups may have inserted tracks) ─
+    local min_idx, max_idx, last_entry = math.huge, -1, nil
+    for _, entry in ipairs(group.tracks) do
+      local idx = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
+      if idx >= 0 then
         if idx < min_idx then min_idx = idx end
-        if idx > max_idx then max_idx = idx end
+        if idx > max_idx then max_idx, last_entry = idx, entry end
       end
+    end
 
-      -- Insert folder at min_idx (pushes all stem tracks down by 1)
-      local folder_name  = "[Suno] " .. song_name
-      local folder_track = insert_named_track(min_idx, folder_name, FOLDER_COLOR)
-      if not folder_track then
-        reaper.ShowConsoleMsg(("[%s] WARN: could not create folder for \"%s\"\n")
+    -- A folder spans min_idx..max_idx. If anything else lives in that range it
+    -- would be swallowed by the folder, so only wrap adjacent groups.
+    local span       = (last_entry and (max_idx - min_idx + 1)) or 0
+    local contiguous = (span == #group.tracks)
+
+    -- Never re-purpose a track that is already part of a folder hierarchy.
+    local depth_in_use = false
+    for _, entry in ipairs(group.tracks) do
+      if reaper.GetMediaTrackInfo_Value(entry.track, "I_FOLDERDEPTH") ~= 0 then
+        depth_in_use = true
+      end
+    end
+
+    -- ── Folder track ──────────────────────────────────────────────────────
+    if do_folder then
+      if not contiguous then
+        reaper.ShowConsoleMsg(
+          ("[%s] SKIP folder for \"%s\": its %d stems are not on adjacent tracks\n")
+          :format(SCRIPT_NAME, song_name, #group.tracks))
+      elseif depth_in_use then
+        reaper.ShowConsoleMsg(
+          ("[%s] SKIP folder for \"%s\": tracks are already in a folder hierarchy\n")
           :format(SCRIPT_NAME, song_name))
-        goto next_group
-      end
+      else
+        local folder_name  = "[Suno] " .. song_name
+        local folder_track = insert_named_track(min_idx, folder_name, FOLDER_COLOR)
+        if not folder_track then
+          reaper.ShowConsoleMsg((("[%s] WARN: could not create folder for \"%s\"\n")
+            :format(SCRIPT_NAME, song_name)))
+        else
+          -- depth=1 opens the folder: the next track is its first child.
+          reaper.SetMediaTrackInfo_Value(folder_track, "I_FOLDERDEPTH", 1)
 
-      -- Set I_FOLDERDEPTH = 1 on folder: next track is first child.
-      reaper.SetMediaTrackInfo_Value(folder_track, "I_FOLDERDEPTH", 1)
-
-      -- Close the folder on the group's LAST stem track (by live index,
-      -- shifted +1 by the folder insertion), not by arithmetic.
-      local last_track = reaper.GetTrack(0, max_idx + 1)
-      if last_track then
-        reaper.SetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH", -1)
-      end
-
-      n_folders = n_folders + 1
-
-      -- ── Create summing bus ────────────────────────────────────────────
-      if do_bus then
-        -- Bus goes AFTER the last stem (just after the folder closes)
-        local bus_idx   = max_idx + 2
-        local bus_name  = ("[Suno] %s  [BUS]"):format(song_name)
-        local bus_track = insert_named_track(bus_idx, bus_name, BUS_COLOR)
-        if bus_track then
-          -- Route each stem (live indices: folder pushed them down by 1)
-          for _, entry in ipairs(group.tracks) do
-            local stem_idx   = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
-            local stem_track = reaper.GetTrack(0, stem_idx)
-            if stem_track then
-              local send_idx = create_send(stem_track, bus_track)
-              -- Set to post-fader
-              reaper.SetTrackSendInfo_Value(stem_track, 0, send_idx, "I_SENDMODE", 0)
-            end
+          -- Close the folder on the group's last stem (its live index shifted
+          -- +1 because the folder track was just inserted above it).
+          local last_track = reaper.GetTrack(0, max_idx + 1)
+          if last_track then
+            reaper.SetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH", -1)
+            n_folders = n_folders + 1
+          else
+            -- Could not find the closing track: undo the open folder so the
+            -- project is never left with an unbalanced hierarchy.
+            reaper.SetMediaTrackInfo_Value(folder_track, "I_FOLDERDEPTH", 0)
+            reaper.ShowConsoleMsg(
+              ("[%s] WARN: folder for \"%s\" could not be closed; reverted\n")
+              :format(SCRIPT_NAME, song_name))
           end
-
-          reaper.ShowConsoleMsg(
-            ("  Bus created: \"%s\"\n"):format(bus_name))
-          n_buses = n_buses + 1
         end
       end
     end
 
-    ::next_group::
+    -- ── Summing bus ───────────────────────────────────────────────────────
+    -- Independent of folder creation: the bus sits directly after the group's
+    -- last stem (which is outside the folder, because that stem closes it).
+    if do_bus and last_entry then
+      local last_idx = reaper.GetMediaTrackInfo_Value(last_entry.track, "IP_TRACKNUMBER") - 1
+      local bus_name  = ("[Suno] %s  [BUS]"):format(song_name)
+      local bus_track = insert_named_track(last_idx + 1, bus_name, BUS_COLOR)
+      if not bus_track then
+        reaper.ShowConsoleMsg((("[%s] WARN: could not create bus for \"%s\"\n")
+          :format(SCRIPT_NAME, song_name)))
+      else
+        local routed = 0
+        for _, entry in ipairs(group.tracks) do
+          local stem_idx   = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
+          local stem_track = reaper.GetTrack(0, stem_idx)
+          if stem_track and create_post_fader_send(stem_track, bus_track) then
+            routed = routed + 1
+          end
+        end
+        reaper.ShowConsoleMsg(
+          ("  Bus created: \"%s\"  (%d/%d stems routed)\n")
+          :format(bus_name, routed, #group.tracks))
+        n_buses = n_buses + 1
+      end
+    end
+
   end
 
   -- ── Restore state ─────────────────────────────────────────────────────

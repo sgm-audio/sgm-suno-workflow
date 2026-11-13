@@ -1,7 +1,13 @@
 -- @description Scan tracks, parse Suno AI filenames, rename tracks, assign colors, and tag metadata
 -- @author Scott Mills
--- @version 1.0.2
+-- @version 1.0.3
 -- @changelog
+--   1.0.3 (2026-11-13)
+--     + Strip a Suno ID that sits BEFORE the stem suffix ("Song_<id>_vocals")
+--     + Create one region per song span instead of one per stem track
+--       (a 4-stem import used to produce 4 identical regions)
+--     + Robust option parsing (empty fields no longer shift the other options)
+--     + Fix the documented example that used a 6-character "ID"
 --   1.0.2 (2026-11-06)
 --     + Fix stem detection when a Suno ID suffix is present (strip ID before stem match)
 --   1.0.1 (2026-06-03)
@@ -35,7 +41,7 @@
 --   - "My Song_abc123def456.wav"       → title "My Song"
 --   - "My Song_vocals_abc123.wav"      → title "My Song", stem "Vocals"
 --   - "instrumental_abc123.wav"        → stem "Instrumental"
---   - "my-song (v2)_abcdef.mp3"       → title "my song (v2)"
+--   - "my-song (v2)_abcdef12.mp3"     → title "my song (v2)"
 --
 --   **How to use:**
 --   1. Run after ZIP Importer or whenever you have Suno-named tracks
@@ -63,7 +69,7 @@
 
   FILENAME PATTERNS UNDERSTOOD:
     "My Song_abc123def456.wav"     → title "My Song",  id "abc123def456"
-    "my-song (v2)_abcdef.mp3"     → title "my song (v2)"
+    "my-song (v2)_abcdef12.mp3"   → title "my song (v2)"
     "My Song_vocals_abc123.wav"   → title "My Song",  stem "Vocals"
     "instrumental_abc123.wav"     → stem "Instrumental" (no separate title)
 
@@ -72,7 +78,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Metadata Organizer"
-local SCRIPT_VERSION = "1.0.2"
+local SCRIPT_VERSION = "1.0.3"
 
 -- ─── COLOR PALETTE ──────────────────────────────────────────────────────────
 
@@ -129,26 +135,28 @@ end
 --
 -- Returns: song_name (string), suno_id (string), stem_type (string|nil)
 
+-- Split a trailing Suno ID (8-32 alphanumeric chars after the last "_").
+-- Returns name, id (id is nil when the suffix is not a valid Suno ID).
+local function strip_trailing_id(name)
+  local song, id = name:match("^(.-)_(%w+)$")
+  if id and #id >= 8 and #id <= 32 then return song, id end
+  return name, nil
+end
+
 local function parse_suno_filename(raw_path)
   -- Extract base filename from full path
   local filename = raw_path:match("[/\\]([^/\\]+)$") or raw_path
   -- Strip extension
   local name = filename:match("^(.+)%.[^%.]+$") or filename
 
-  -- Split off the trailing Suno ID FIRST (last _XXXXXXXX segment).
-  -- Suno IDs are 8–32 alphanumeric characters.
-  -- Lua patterns don't support {n,m} quantifiers; we match loosely
-  -- and validate length in code.
-  local song_part, id_part = name:match("^(.-)_(%w+)$")
-  if not id_part or #id_part < 8 or #id_part > 32 then
-    song_part, id_part = name, nil  -- not a Suno ID — keep whole name
-  end
+  -- 1. Split off a trailing Suno ID ("Song_1234abcd").
+  local song_part, suno_id = strip_trailing_id(name)
 
-  -- Detect stem suffix at the end of the remaining (ID-stripped) name
-  local stem_type = nil
+  -- 2. Detect a stem suffix at the end of the remaining name.
+  local stem_type  = nil
   local name_lower = song_part:lower()
   for _, rule in ipairs(STEM_RULES) do
-    -- Match at word boundary / end of string
+    -- Match at a word boundary / start of string
     if name_lower:match("[%s_%(%-]" .. rule.pattern .. "$")
     or name_lower:match("^" .. rule.pattern .. "$") then
       stem_type = rule.name
@@ -159,11 +167,18 @@ local function parse_suno_filename(raw_path)
     end
   end
 
+  -- 3. A Suno ID that sat BEFORE the stem ("Song_1234abcd_vocals") is now the
+  --    trailing segment, so strip again.
+  do
+    local stripped, id = strip_trailing_id(song_part)
+    if id then song_part, suno_id = stripped, (suno_id or id) end
+  end
+
   local song_name = trim(song_part:gsub("[_%-]+", " "))
-  local suno_id   = id_part or ""
+  local id        = suno_id or ""
 
   if song_name == "" then song_name = "Untitled" end
-  return song_name, suno_id, stem_type
+  return song_name, id, stem_type
 end
 
 -- Return the source filename of the first item on a track, or nil.
@@ -202,7 +217,10 @@ local function Main()
   if not ok then return end
 
   local parts = {}
-  for p in csv:gmatch("[^,]+") do table.insert(parts, trim(p):lower()) end
+  for field in (csv .. ","):gmatch("(.-),") do
+    table.insert(parts, trim(field):lower())
+  end
+  if parts[1] == "" then parts[1] = nil end
   local scope      = parts[1] or "all"
   local do_regions = (parts[2] or "yes") ~= "no"
   local do_color   = (parts[3] or "yes") ~= "no"
@@ -215,6 +233,7 @@ local function Main()
   reaper.PreventUIRefresh(1)
 
   local song_colors  = {}  -- song_name → palette index
+  local seen_regions = {}  -- "name@start:end" → true (dedupes multi-stem songs)
   local next_color   = 1
   local n_processed  = 0
   local n_skipped    = 0
@@ -265,8 +284,14 @@ local function Main()
         local ipos  = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
         local ilen  = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
         local rname = song_name .. (ii > 0 and (" [" .. (ii + 1) .. "]") or "")
-        -- isrgn=true, no end marker for marker (we use region so pass ipos+ilen)
-        reaper.AddProjectMarker2(0, true, ipos, ipos + ilen, rname, -1, 0)
+        -- Several stem tracks of the same song cover the same span; only one
+        -- region per (name, span) pair is useful.
+        local key = ("%s@%.3f:%.3f"):format(rname, ipos, ipos + ilen)
+        if not seen_regions[key] then
+          seen_regions[key] = true
+          -- isrgn=true: region from item start to item end
+          reaper.AddProjectMarker2(0, true, ipos, ipos + ilen, rname, -1, 0)
+        end
       end
     end
 

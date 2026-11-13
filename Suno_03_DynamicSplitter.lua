@@ -1,7 +1,15 @@
 -- @description Split Suno audio items at structural boundaries (verse/chorus/bridge) using energy contrast
 -- @author Scott Mills
--- @version 1.0.0
+-- @version 1.0.1
 -- @changelog
+--   1.0.1 (2026-11-13)
+--     + Fix peak-cache call: the API function is GetMediaItemTake_Peaks, not
+--       MediaItemTake_GetPeaks (which does not exist and aborted every run)
+--     + Fix peak buffer layout (maximums block, then minimums block, interleaved)
+--     + Peak start time is now project time, so items not at 0 s analyse correctly
+--     + Mask the bit-packed peak return value (count lives in the low 20 bits)
+--     + Fix inverted sensitivity: lower values now split more, as documented
+--     + Robust parameter parsing (empty fields no longer shift the other fields)
 --   1.0.0 (2026-05-23)
 --     + Initial release
 --     + Long-window energy contrast structural detection
@@ -73,7 +81,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Dynamic Splitter"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.1"
 
 -- ─── TUNEABLE DEFAULTS ────────────────────────────────────────────────────────
 
@@ -92,6 +100,45 @@ local function trim(s) return s:match("^%s*(.-)%s*$") end
 local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
 
 -- Return the active take name of an item (empty string if none).
+-- Parse "a,b,c" into a fixed-size array of numbers; empty fields stay nil.
+local function parse_numbers(csv, count)
+  local out = {}
+  local i = 1
+  for field in (csv .. ","):gmatch("(.-),") do
+    if i > count then break end
+    out[i] = tonumber(trim(field))
+    i = i + 1
+  end
+  return out
+end
+
+-- ─── PEAK CACHE ACCESS ──────────────────────────────────────────────────────
+-- Official API (SDK: reaper_plugin_functions.h):
+--   GetMediaItemTake_Peaks(take, peakrate, starttime, numchannels,
+--                          numsamplesperchannel, want_extra_type, buf)
+--   * starttime is PROJECT time.
+--   * buf = maximums block, then minimums block, interleaved per channel.
+--   * return value is bit-packed; sample count = retval & 0xFFFFF.
+local PEAK_COUNT_MASK = 0xFFFFF
+
+local function fetch_peaks(take, item_pos, peakrate, num_chans, nsamples)
+  local buf = reaper.new_array(num_chans * nsamples * 2)
+  buf.clear()
+  local ret = reaper.GetMediaItemTake_Peaks(
+    take, peakrate, item_pos, num_chans, nsamples, 0, buf)
+  local n = ret & PEAK_COUNT_MASK
+  if n > nsamples then n = nsamples end
+  return buf, n
+end
+
+local function frame_amp(buf, nsamples, num_chans, s, c)
+  local base = (s - 1) * num_chans + (c - 1)
+  local hi = buf[base + 1]
+  local lo = buf[num_chans * nsamples + base + 1]
+  if lo < 0 then lo = -lo end
+  return (hi > lo) and hi or lo
+end
+
 local function take_name(item)
   local take = reaper.GetActiveTake(item)
   if not take then return "" end
@@ -112,18 +159,19 @@ end
 -- Returns an array of split times (seconds from project start), or nil + error.
 
 local function detect_boundaries(take, item_pos, item_len, sensitivity, min_section_secs)
-  local src       = reaper.GetMediaItemTake_Source(take)
+  local src = reaper.GetMediaItemTake_Source(take)
+  if not src then return nil, "The active take has no media source." end
+
   local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
-  local n_frames  = math.ceil(item_len * SHORT_FRAME_RATE)
+  if not num_chans or num_chans < 1 then num_chans = 1 end
+  local n_frames = math.ceil(item_len * SHORT_FRAME_RATE)
 
   if n_frames < 4 then
     return nil, "Item is too short to analyse."
   end
 
-  -- Fetch peaks at SHORT_FRAME_RATE resolution (1 value per frame per channel)
-  local buf = reaper.new_array(num_chans * n_frames)
-  local n   = reaper.MediaItemTake_GetPeaks(
-                take, SHORT_FRAME_RATE, 0, num_chans, n_frames, 0, buf)
+  -- Fetch peaks at SHORT_FRAME_RATE resolution (1 frame per channel per value)
+  local buf, n = fetch_peaks(take, item_pos, SHORT_FRAME_RATE, num_chans, n_frames)
 
   if n < 4 then
     return nil,
@@ -135,8 +183,8 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
   local energy = {}
   for s = 1, n do
     local e = 0.0
-    for c = 0, num_chans - 1 do
-      local v = buf[c * n + s]
+    for c = 1, num_chans do
+      local v = frame_amp(buf, n_frames, num_chans, s, c)
       e = e + v * v
     end
     energy[s] = e / num_chans
@@ -186,8 +234,11 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
   for _, v in ipairs(odf) do var = var + (v - mean_o)^2 end
   local std_o = math.sqrt(var / n)
 
-  -- sensitivity maps to [6, 2] multiplier range (lower sensitivity = higher bar)
-  local mult      = 6.0 - clamp(sensitivity, 0.1, 1.0) * 4.0
+  -- Sensitivity maps to a [2.4, 6.0] threshold multiplier:
+  --   0.1 (loose)  → low bar  → more splits
+  --   1.0 (strict) → high bar → fewer splits
+  -- This matches the prompt text and the README ("lower values = more splits").
+  local mult      = 2.0 + clamp(sensitivity, 0.1, 1.0) * 4.0
   local threshold = mean_o + mult * std_o
 
   -- Min gap in frames
@@ -238,10 +289,7 @@ local function Main()
     DEFAULT_SENSITIVITY .. "," .. DEFAULT_MIN_SECTION .. "," .. DEFAULT_MAX_SECTIONS)
   if not ok then return end
 
-  local params = {}
-  for p in csv:gmatch("[^,]+") do
-    table.insert(params, tonumber(trim(p)) or 0)
-  end
+  local params = parse_numbers(csv, 3)
   local sensitivity  = clamp(params[1] or 0.40, 0.1, 1.0)
   local min_section  = math.max(1.0, params[2] or 8.0)
   local max_splits   = math.max(1, math.floor(params[3] or 12))

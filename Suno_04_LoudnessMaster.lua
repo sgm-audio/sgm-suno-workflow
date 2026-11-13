@@ -1,7 +1,15 @@
 -- @description Batch-normalise selected Suno items to a target loudness level (RMS estimate)
 -- @author Scott Mills
--- @version 1.0.0
+-- @version 1.0.1
 -- @changelog
+--   1.0.1 (2026-11-13)
+--     + Measure real samples through GetAudioAccessorSamples instead of guessing
+--       RMS from the peak cache (the old peak call did not even exist, so every
+--       run aborted with "attempt to call a nil value")
+--     + Peak-cache path kept as a fallback, with the correct API name, project
+--       start time, block layout and bit-packed return value
+--     + Report true sample peak (max of |max| and |min|) for the ceiling check
+--     + Robust parameter parsing (empty fields no longer shift the other fields)
 --   1.0.0 (2026-05-23)
 --     + Initial release
 --     + Per-item integrated loudness measurement
@@ -58,10 +66,11 @@
     level, correcting the wild volume variation typical of AI-generated audio.
 
     Method:
-      1. Fetch peak data from REAPER's peak cache at 100 Hz resolution.
-      2. Compute an RMS estimate:  RMS ≈ sqrt( mean(peak²) ).
-         This is a peak-RMS approximation, not true K-weighted LUFS.
-         Verify the result with a real loudness meter.
+      1. Read the item's audio through a take audio accessor
+         (GetAudioAccessorSamples) in 32768-sample blocks.
+      2. Compute true sample RMS over the item and the sample peak
+         (max |sample|). If the accessor is unavailable, fall back to the
+         peak cache (GetMediaItemTake_Peaks) with a documented over-estimate.
       3. Convert to dBFS: measured_dBFS = 20 × log10(RMS).
       4. Gain required: Δ dB = target_dBFS − measured_dBFS.
       5. Apply via the item's D_VOL property (linear gain, compounded with any
@@ -84,7 +93,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Loudness Master"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.1"
 
 -- ─── TUNEABLE DEFAULTS ────────────────────────────────────────────────────────
 
@@ -106,52 +115,147 @@ local SKIP_THRESHOLD = 0.5
 
 local function trim(s) return s:match("^%s*(.-)%s*$") end
 
+-- Parse "a,b" into a fixed-size array of numbers; empty fields stay nil.
+local function parse_numbers(csv, count)
+  local out = {}
+  local i = 1
+  for field in (csv .. ","):gmatch("(.-),") do
+    if i > count then break end
+    out[i] = tonumber(trim(field))
+    i = i + 1
+  end
+  return out
+end
+
 local function db_to_linear(db)  return 10 ^ (db / 20) end
 local function linear_to_db(lin) return (lin > 0) and (20 * math.log(lin, 10)) or -math.huge end
 
 -- ─── LOUDNESS MEASUREMENT ────────────────────────────────────────────────────
 
--- Returns { rms_db, peak_db } or nil on failure.
+-- Samples per block when streaming audio through the accessor.
+local ACCESSOR_CHUNK = 32768
+
+-- Peak-cache fallback: official API GetMediaItemTake_Peaks (bit-packed return,
+-- maximums block then minimums block, starttime in project time).
+local PEAK_COUNT_MASK = 0xFFFFF
+
+-- Returns { rms_db, peak_db, method } or nil on failure.
+local function measure_with_accessor(item, take)
+  local src = reaper.GetMediaItemTake_Source(take)
+  if not src then return nil end
+
+  local samplerate = reaper.GetMediaSourceSampleRate(src)
+  if not samplerate or samplerate <= 0 then return nil end
+
+  local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
+  if not num_chans or num_chans < 1 then return nil end
+
+  local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local item_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local total    = math.floor(item_len * samplerate)
+  if total < 2 then return nil end
+
+  local acc = reaper.CreateTakeAudioAccessor(take)
+  if not acc then return nil end
+
+  local buf     = reaper.new_array(ACCESSOR_CHUNK * num_chans)
+  local sum_sq  = 0.0
+  local peak    = 0.0
+  local counted = 0
+  local read_any = false
+  local offset  = 0
+
+  while offset < total do
+    local n = math.min(ACCESSOR_CHUNK, total - offset)
+    buf.clear()
+    local ok = reaper.GetAudioAccessorSamples(
+      acc, samplerate, num_chans, item_pos + offset / samplerate, n, buf)
+    if ok < 0 then break end
+    if ok > 0 then read_any = true end
+
+    for s = 1, n do
+      local frame = 0.0
+      for c = 1, num_chans do
+        local v = buf[(s - 1) * num_chans + c]
+        if v > peak then peak = v
+        elseif -v > peak then peak = -v end
+        frame = frame + v
+      end
+      frame = frame / num_chans          -- mono downmix, used for RMS only
+      sum_sq = sum_sq + frame * frame
+    end
+    counted = counted + n
+    offset  = offset + n
+  end
+
+  reaper.DestroyAudioAccessor(acc)
+
+  if not read_any or counted < 2 then return nil end
+
+  local rms = math.sqrt(sum_sq / counted)
+  if rms < 1e-9 or peak < 1e-9 then return nil end   -- silent item
+
+  return {
+    rms_db  = linear_to_db(rms),
+    peak_db = linear_to_db(peak),
+    method  = "accessor",
+  }
+end
+
+-- Fallback: estimate level from REAPER's peak cache at 100 Hz.
+-- The peak cache stores window maximums, so this over-estimates RMS — correct
+-- for choosing a gain, but do not treat the number as a loudness measurement.
+local function measure_with_peaks(item, take)
+  local src = reaper.GetMediaItemTake_Source(take)
+  if not src then return nil end
+
+  local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
+  if not num_chans or num_chans < 1 then num_chans = 1 end
+  local item_pos = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+  local item_len = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local nsamples = math.ceil(item_len * PEAKRATE)
+
+  if nsamples < 2 then return nil end
+
+  local buf = reaper.new_array(num_chans * nsamples * 2)
+  buf.clear()
+  local ret = reaper.GetMediaItemTake_Peaks(
+    take, PEAKRATE, item_pos, num_chans, nsamples, 0, buf)
+  local n = ret & PEAK_COUNT_MASK
+  if n > nsamples then n = nsamples end
+  if n < 2 then return nil end
+
+  local sum_sq = 0.0
+  local peak   = 0.0
+  for s = 1, n do
+    local frame = 0.0
+    for c = 1, num_chans do
+      local base = (s - 1) * num_chans + (c - 1)
+      local hi = buf[base + 1]
+      local lo = buf[num_chans * nsamples + base + 1]
+      if lo < 0 then lo = -lo end
+      local amp = (hi > lo) and hi or lo
+      if amp > peak then peak = amp end
+      frame = frame + amp
+    end
+    frame = frame / num_chans
+    sum_sq = sum_sq + frame * frame
+  end
+
+  local rms = math.sqrt(sum_sq / n)
+  if rms < 1e-9 or peak < 1e-9 then return nil end
+
+  return {
+    rms_db  = linear_to_db(rms),
+    peak_db = linear_to_db(peak),
+    method  = "peaks",
+  }
+end
+
 local function measure_item(item)
   local take = reaper.GetActiveTake(item)
   if not take or reaper.TakeIsMIDI(take) then return nil end
-
-  local src       = reaper.GetMediaItemTake_Source(take)
-  local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
-  local item_len  = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-  local n_req     = math.ceil(item_len * PEAKRATE)
-
-  if n_req < 2 then return nil end
-
-  -- want_extra_type = 0: positive peaks only (channel-major layout)
-  local buf = reaper.new_array(num_chans * n_req)
-  local n   = reaper.MediaItemTake_GetPeaks(take, PEAKRATE, 0, num_chans, n_req, 0, buf)
-  if n < 2 then return nil end
-
-  local sum_sq  = 0.0
-  local peak    = 0.0
-
-  for s = 1, n do
-    local max_v = 0.0
-    for c = 0, num_chans - 1 do
-      local v = buf[c * n + s]
-      if v > max_v then max_v = v end
-    end
-    sum_sq = sum_sq + max_v * max_v
-    if max_v > peak then peak = max_v end
-  end
-
-  local rms_linear = math.sqrt(sum_sq / n)
-
-  -- Guard against silence
-  if rms_linear < 1e-9 or peak < 1e-9 then
-    return nil  -- silent item — skip
-  end
-
-  return {
-    rms_db  = linear_to_db(rms_linear),
-    peak_db = linear_to_db(peak),
-  }
+  return measure_with_accessor(item, take) or measure_with_peaks(item, take)
 end
 
 -- ─── INIT ────────────────────────────────────────────────────────────────────
@@ -179,8 +283,7 @@ local function Main()
     DEFAULT_TARGET .. "," .. PEAK_CEILING)
   if not ok then return end
 
-  local parts      = {}
-  for p in csv:gmatch("[^,]+") do table.insert(parts, tonumber(trim(p))) end
+  local parts      = parse_numbers(csv, 2)
   local target_db  = parts[1] or -18.0
   local ceiling_db = parts[2] or -0.3
 
@@ -193,8 +296,6 @@ local function Main()
   end
   if ceiling_db > 0 then ceiling_db = -0.1 end
 
-  local target_lin  = db_to_linear(target_db)
-  local ceiling_lin = db_to_linear(ceiling_db)
 
   -- ── Collect selected items ────────────────────────────────────────────
   local n_items = reaper.CountSelectedMediaItems(0)
@@ -248,20 +349,23 @@ local function Main()
         ("LIMIT %-40s  peak limited by %.1f dB"):format(fname, overshoot))
     end
 
-    local new_vol = math.max(0.0, current_vol * gain_factor)
+    -- Keep the item volume positive; D_VOL is a linear gain (0 would mute).
+    local new_vol = math.max(1e-6, current_vol * gain_factor)
     reaper.SetMediaItemInfo_Value(item, "D_VOL", new_vol)
 
     n_adjusted = n_adjusted + 1
     table.insert(log_lines,
-      ("ADJ   %-40s  %+.1f dB  (%.1f → %.1f dBFS RMS)")
-      :format(fname, delta_db, meas.rms_db, meas.rms_db + delta_db))
+      ("ADJ   %-40s  %+.1f dB  (%.1f → %.1f dBFS RMS, %s)")
+      :format(fname, delta_db, meas.rms_db, meas.rms_db + delta_db,
+              meas.method or "?"))
 
     ::continue::
   end
 
   reaper.PreventUIRefresh(-1)
   reaper.Undo_EndBlock(
-    ("Suno Loudness: %d items → %.0f dBFS"):format(n_adjusted, target_db), -1)
+    (SCRIPT_NAME .. " v" .. SCRIPT_VERSION .. ": %d items → %.0f dBFS RMS")
+    :format(n_adjusted, target_db), -1)
   reaper.UpdateArrange()
 
   -- Log summary to console

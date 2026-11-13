@@ -1,7 +1,17 @@
 -- @description Analyse a selected Suno audio item, estimate BPM, and insert a REAPER tempo marker
 -- @author Scott Mills
--- @version 1.0.0
+-- @version 1.0.1
 -- @changelog
+--   1.0.1 (2026-11-13)
+--     + Fix peak-cache call: MediaItemTake_GetPeaks does not exist in the
+--       REAPER API; the correct function is GetMediaItemTake_Peaks
+--     + Fix peak buffer layout (maximums block, then minimums block, interleaved)
+--     + Fix peak start time: must be project time, not 0
+--     + Mask the bit-packed return value (count lives in the low 20 bits)
+--     + Guard marker now restores the previous project tempo instead of
+--       repeating the new one
+--     + Use SetTempoTimeSigMarker (AddTempoTimeSigMarker is deprecated)
+--     + Robust parameter parsing (empty fields no longer shift the other fields)
 --   1.0.0 (2026-05-23)
 --     + Initial release
 --     + Long-window energy contrast BPM detection
@@ -66,17 +76,20 @@
       7. Octave-correct into the 70–160 BPM range typical of Suno output.
       8. Present the result for confirmation — user can accept or override.
 
-    Buffer layout for MediaItemTake_GetPeaks (want_extra_type = 0):
-      buf[1 .. n]       = channel 0 positive peaks   (n = return value)
-      buf[n+1 .. 2*n]   = channel 1 positive peaks   (stereo only)
-    Values are normalised floats in [0.0, 1.0].
+    Buffer layout for GetMediaItemTake_Peaks (want_extra_type = 0):
+      buf[0 .. chans*ns-1]        = maximums, interleaved per channel
+      buf[chans*ns .. 2*chans*ns-1] = minimums, interleaved per channel
+      ns = numsamplesperchannel, NOT the return value.
+    The return value is bit-packed: sample count in the low 20 bits
+    (0xFFFFF), output mode in bits 20-23, extra-type flag in bit 24.
+    starttime is a PROJECT time, not a take-relative time.
 
   DEPENDENCIES:
     REAPER 6.70+  (no external extensions required)
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Tempo Mapper"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.1"
 
 -- ─── TUNEABLE CONSTANTS ──────────────────────────────────────────────────────
 -- Peaks per second fetched from REAPER's peak cache.
@@ -101,6 +114,52 @@ local function trim(s)  return s:match("^%s*(.-)%s*$") end
 
 local function clamp(v, lo, hi)  return math.max(lo, math.min(hi, v)) end
 
+-- Parse "a,b,c,d" into a fixed-size array of numbers.
+-- Empty / non-numeric fields yield nil in their own slot, so one blank field
+-- can never shift the meaning of the fields that follow it.
+local function parse_numbers(csv, count)
+  local out = {}
+  local i = 1
+  for field in (csv .. ","):gmatch("(.-),") do
+    if i > count then break end
+    local v = tonumber(trim(field))
+    out[i] = v
+    i = i + 1
+  end
+  return out
+end
+
+-- ─── PEAK CACHE ACCESS ──────────────────────────────────────────────────────
+-- Official API (SDK: reaper_plugin_functions.h):
+--   integer GetMediaItemTake_Peaks(MediaItem_Take take, number peakrate,
+--       number starttime, integer numchannels, integer numsamplesperchannel,
+--       integer want_extra_type, reaper.array buf)
+-- Notes that matter:
+--   * starttime is PROJECT time (an item at 10 s must pass 10, not 0).
+--   * buf is two blocks of numchannels*numsamplesperchannel doubles:
+--     maximums first, then minimums, each interleaved per channel.
+--   * the return value is bit-packed; the sample count is retval & 0xFFFFF.
+local PEAK_COUNT_MASK = 0xFFFFF
+
+local function fetch_peaks(take, item_pos, peakrate, num_chans, nsamples)
+  local buf = reaper.new_array(num_chans * nsamples * 2)
+  buf.clear()
+  local ret = reaper.GetMediaItemTake_Peaks(
+    take, peakrate, item_pos, num_chans, nsamples, 0, buf)
+  local n = ret & PEAK_COUNT_MASK
+  if n > nsamples then n = nsamples end
+  return buf, n
+end
+
+-- Peak amplitude (max |max|, |min|) of frame `s` on channel `c` (both 1-based).
+local function frame_amp(buf, nsamples, num_chans, s, c)
+  local base = (s - 1) * num_chans + (c - 1)
+  local hi = buf[base + 1]
+  local lo = buf[num_chans * nsamples + base + 1]
+  if lo < 0 then lo = -lo end
+  return (hi > lo) and hi or lo
+end
+
 -- Median of a numeric array (non-destructive).
 local function median(arr)
   if #arr == 0 then return nil end
@@ -115,18 +174,19 @@ end
 -- Fetch audio peaks and compute a list of onset times (seconds from item start).
 -- sensitivity: [0.1, 1.0].  Lower = more onsets detected; higher = only strong beats.
 -- Returns (onsets_table, err_string).  err_string is nil on success.
-local function detect_onsets(take, item_length, sensitivity)
-  local src       = reaper.GetMediaItemTake_Source(take)
+local function detect_onsets(take, item_pos, item_length, sensitivity)
+  local src = reaper.GetMediaItemTake_Source(take)
+  if not src then return nil, "The active take has no media source." end
+
   local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
-  local n_req     = math.ceil(item_length * PEAKRATE)
+  if not num_chans or num_chans < 1 then num_chans = 1 end
+  local n_req = math.ceil(item_length * PEAKRATE)
 
   if n_req < 8 then
     return nil, "Item is too short to analyse (need at least 20 ms)."
   end
 
-  -- Buffer: channel-major layout, want_extra_type = 0 (positive peaks only)
-  local buf = reaper.new_array(num_chans * n_req)
-  local n   = reaper.MediaItemTake_GetPeaks(take, PEAKRATE, 0, num_chans, n_req, 0, buf)
+  local buf, n = fetch_peaks(take, item_pos, PEAKRATE, num_chans, n_req)
 
   if n < 8 then
     return nil,
@@ -134,12 +194,12 @@ local function detect_onsets(take, item_length, sensitivity)
       .. "(Build peaks: right-click item → Build missing peaks.)"
   end
 
-  -- Mix channels to a mono energy signal: E[s] = mean of (peak_c[s])^2 across channels
+  -- Mix channels to a mono energy signal: E[s] = mean of peak_c[s]^2
   local energy = {}
   for s = 1, n do
     local e = 0.0
-    for c = 0, num_chans - 1 do
-      local v = buf[c * n + s]   -- channel-major, 1-indexed
+    for c = 1, num_chans do
+      local v = frame_amp(buf, n_req, num_chans, s, c)
       e = e + v * v
     end
     energy[s] = e / num_chans
@@ -262,6 +322,20 @@ end
 
 -- ─── MAIN ───────────────────────────────────────────────────────────────────
 
+-- Return the tempo / time signature in effect at `timepos`.
+local function tempo_at(timepos)
+  local best = nil
+  for i = 0, reaper.CountTempoTimeSigMarkers(0) - 1 do
+    local _, pos, _mp, _bp, bpm, num, den = reaper.GetTempoTimeSigMarker(0, i)
+    if pos <= timepos + 1e-9 then
+      best = { pos = pos, bpm = bpm, num = num, den = den }
+    end
+  end
+  if best then return best end
+  local bpm, bpi = reaper.GetProjectTimeSignature2(0)
+  return { pos = 0, bpm = bpm or 120, num = bpi or 4, den = 4 }
+end
+
 local function Main()
   if not init() then return end
 
@@ -279,10 +353,7 @@ local function Main()
     "0.35,4,4,0")
   if not ok then return end
 
-  local params = {}
-  for p in csv:gmatch("[^,]+") do
-    table.insert(params, tonumber(trim(p)) or 0)
-  end
+  local params = parse_numbers(csv, 4)
   local sensitivity  = clamp(params[1] or 0.35, 0.1, 1.0)
   local timesig_num  = math.max(1, math.floor(params[2] or 4))
   local timesig_den  = math.max(1, math.floor(params[3] or 4))
@@ -296,12 +367,13 @@ local function Main()
     reaper.ShowConsoleMsg(("[%s] Using manual BPM: %.2f\n"):format(SCRIPT_NAME, final_bpm))
   else
     reaper.ShowConsoleMsg(("[%s] Analysing audio peaks…\n"):format(SCRIPT_NAME))
-    local onsets, detect_err = detect_onsets(take, item_len, sensitivity)
+    local onsets, detect_err = detect_onsets(take, item_pos, item_len, sensitivity)
 
     local default_bpm_str = "120"
     local confirm_prompt
 
     if detect_err then
+      reaper.ShowConsoleMsg(("[%s] WARN: %s\n"):format(SCRIPT_NAME, detect_err))
       confirm_prompt = "Auto-detect failed:\n" .. detect_err .. "\n\nEnter BPM manually:"
     else
       local detected = estimate_bpm(onsets)
@@ -334,6 +406,23 @@ local function Main()
   -- ── Apply tempo markers ───────────────────────────────────────────────
   local saved_cursor = reaper.GetCursorPosition()
 
+  -- Capture the tempo / time signature in effect at the item start BEFORE any
+  -- changes, so the guard marker can restore it after the item.
+  local prev_tempo  = tempo_at(item_pos)
+  local guard_added = false
+
+  -- End of the arrangement (only needed to decide whether a guard is useful).
+  local project_end = 0
+  for ti = 0, reaper.CountTracks(0) - 1 do
+    local tr = reaper.GetTrack(0, ti)
+    for ii = 0, reaper.CountTrackMediaItems(tr) - 1 do
+      local it = reaper.GetTrackMediaItem(tr, ii)
+      local ep = reaper.GetMediaItemInfo_Value(it, "D_POSITION")
+           + reaper.GetMediaItemInfo_Value(it, "D_LENGTH")
+      if ep > project_end then project_end = ep end
+    end
+  end
+
   reaper.Undo_BeginBlock()
   reaper.PreventUIRefresh(1)
 
@@ -348,34 +437,27 @@ local function Main()
     end
   end
 
-  -- Primary marker at item start
-  reaper.AddTempoTimeSigMarker(0, item_pos, final_bpm, timesig_num, timesig_den, false)
+  -- Primary marker at item start. ptidx = -1 inserts a new marker;
+  -- AddTempoTimeSigMarker is deprecated in favour of this call.
+  reaper.SetTempoTimeSigMarker(0, -1, item_pos, -1, -1,
+    final_bpm, timesig_num, timesig_den, false)
 
-  -- Optional guard marker just after item end — prevents BPM from leaking into
-  -- subsequent items that may have their own (different) tempo.
+  -- Optional guard marker just after item end: restores the tempo that was in
+  -- force before this item, so the new BPM cannot leak into neighbouring songs.
   if ADD_GUARD_MARKER then
     local guard_t = item_pos + item_len
-    -- Only add if there is audio content after this item
-    local project_end = 0
-    for ti = 0, reaper.CountTracks(0) - 1 do
-      local tr = reaper.GetTrack(0, ti)
-      for ii = 0, reaper.CountTrackMediaItems(tr) - 1 do
-        local it = reaper.GetTrackMediaItem(tr, ii)
-        local ep = reaper.GetMediaItemInfo_Value(it, "D_POSITION")
-             + reaper.GetMediaItemInfo_Value(it, "D_LENGTH")
-        if ep > project_end then project_end = ep end
-      end
-    end
     if guard_t < project_end - 0.01 then
-      -- Re-insert the same BPM as a guard (maintains tempo continuity downstream)
-      reaper.AddTempoTimeSigMarker(0, guard_t, final_bpm, timesig_num, timesig_den, false)
+      reaper.SetTempoTimeSigMarker(0, -1, guard_t, -1, -1,
+        prev_tempo.bpm, prev_tempo.num, prev_tempo.den, false)
+      guard_added = true
     end
   end
 
   reaper.SetEditCurPos(saved_cursor, false, false)
   reaper.PreventUIRefresh(-1)
   reaper.Undo_EndBlock(
-    ("Suno Tempo Map: %.2f BPM @ %.3fs"):format(final_bpm, item_pos), -1)
+    (SCRIPT_NAME .. " v" .. SCRIPT_VERSION .. ": %.2f BPM @ %.3fs")
+    :format(final_bpm, item_pos), -1)
   reaper.UpdateArrange()
   reaper.UpdateTimeline()
 
@@ -385,7 +467,8 @@ local function Main()
     .. "Time sig     : %d/%d\n"
     .. "Item start   : %.3f s\n"
     .. "Markers removed : %d (prior)\n"
-    .. (ADD_GUARD_MARKER and "Guard marker : inserted at item end\n" or ""))
+    .. (guard_added and ("Guard marker : tempo restored to %.2f at %.3fs\n")
+          :format(prev_tempo.bpm, item_pos + item_len) or ""))
     :format(final_bpm, timesig_num, timesig_den, item_pos, removed),
     SCRIPT_NAME, 0)
 end

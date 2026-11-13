@@ -1,8 +1,16 @@
 -- @description SGM Studios Suno AI Workflow Suite: six-script pipeline for importing and preparing Suno AI tracks
 -- @author Scott Mills
--- @version 1.1.2
+-- @version 1.2.0
 -- @metapackage
 -- @changelog
+--   1.2.0 (2026-11-13)
+--     + Audit release: fixes across all six scripts
+--       SGM_Suno ZIP Importer 1.1.2  — GetTempPath crash, shell quoting, JSON unicode, audio formats
+--       Suno_01_MetadataOrganizer 1.0.3 — ID before stem, one region per song
+--       Suno_02_TempoMapper 1.0.1       — peak API, project-time peaks, real guard marker
+--       Suno_03_DynamicSplitter 1.0.1   — peak API, inverted sensitivity
+--       Suno_04_LoudnessMaster 1.0.1    — real sample measurement via audio accessor
+--       Suno_05_StemAligner 1.0.3       — bus without folder, folder safety
 --   1.1.2 (2026-11-06)
 --     + Fix @provides path for ZIP importer (moved to Various/SGM_Suno ZIP Importer.lua)
 --     + Suno_01_MetadataOrganizer 1.0.2: stem detection with Suno ID suffix

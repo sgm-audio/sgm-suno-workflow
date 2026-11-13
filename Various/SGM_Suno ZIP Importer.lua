@@ -1,7 +1,17 @@
 -- @description Import a Suno AI ZIP file: unzip, parse metadata, create color-coded session with lyrics markers
 -- @author Scott Mills
--- @version 1.1.1
+-- @version 1.1.2
 -- @changelog
+--   1.1.2 (2026-11-13)
+--     + Fix crash on import: reaper.GetTempPath() is not a REAPER API
+--       function; the temp folder is now resolved from TEMP/TMPDIR
+--     + Sanitise the temp folder name derived from the ZIP filename
+--       (no shell metacharacters can reach os.execute / io.popen)
+--     + Resolve `lfs` without leaking an undeclared global
+--     + Decode \uXXXX escapes in info.json (and only accept string values)
+--     + Accept .m4a/.flac/.ogg/.opus/.aif(f) audio in addition to .mp3/.wav
+--     + Remove the unreachable cancel path and the invalid @provides line
+--     + Always clean the temp folder, including on the error paths
 --   1.1.1 (2026-11-06)
 --     + Validate every ZIP member path before extraction (zip-slip / path-traversal guard)
 --     + Nil-guard folder track and stem tracks so failures can't crash REAPER
@@ -12,7 +22,6 @@
 --   1.0.0
 --     + Initial release
 --     + ZIP extraction, info.json parsing, folder track creation
--- @provides [main] .
 -- @about
 --   ## Suno ZIP Importer
 --   One-click import of a Suno AI generation ZIP file into REAPER.
@@ -104,7 +113,7 @@ end
 -- ─── CONSTANTS ──────────────────────────────────────────────────────────────
 
 local SCRIPT_NAME    = "Suno ZIP Importer"
-local SCRIPT_VERSION = "1.1.1"
+local SCRIPT_VERSION = "1.1.2"
 local WINDOW_W       = 640
 local WINDOW_H       = 520
 
@@ -150,7 +159,6 @@ local state = {
   log      = {},       -- { level="info"|"warn"|"error", msg=string }
   meta     = {},       -- parsed from info.json
   progress = 0.0,      -- 0.0 → 1.0 for progress bar
-  cancel   = false,
   scroll_to_bottom = false,
 }
 
@@ -167,6 +175,18 @@ local function warn(m) log("warn",  m) end
 local function lerr(m) log("error", m) end  -- 'err' conflicts with Lua std
 
 -- ─── PATH UTILITIES ─────────────────────────────────────────────────────────
+
+-- lfs is supplied by SWS in most installs; resolve it without relying on an
+-- undeclared global (a bare `lfs` read is a nil lookup when SWS is absent).
+local lfs
+do
+  local ok, mod = pcall(require, "lfs")
+  if ok and type(mod) == "table" then
+    lfs = mod
+  elseif type(_G.lfs) == "table" then
+    lfs = _G.lfs
+  end
+end
 
 local function is_windows()
   return reaper.GetOS():find("Win") ~= nil
@@ -192,6 +212,31 @@ local function stripext(fname)
   return fname:match("^(.+)%.[^%.]+$") or fname
 end
 
+-- Directory for temporary extraction. REAPER has no GetTempPath() API
+-- function, so ask the environment and fall back to a sane default.
+local function temp_base()
+  local candidates = { "TEMP", "TMP", "TMPDIR" }
+  for _, var in ipairs(candidates) do
+    local v = os.getenv(var)
+    if v and v ~= "" then return trail(v) end
+  end
+  return is_windows() and "C:\\Windows\\Temp\\" or "/tmp/"
+end
+
+-- Quote a path for /bin/sh: everything inside single quotes is literal.
+local function sh_quote(path)
+  return "'" .. tostring(path):gsub("'", "'\\''") .. "'"
+end
+
+-- Make a filename safe for use inside a shell command and a directory name.
+local function sanitize_component(name)
+  name = (name or ""):gsub("[^%w%-_%.]", "_")
+  name = name:gsub("^%s+", ""):gsub("%s+$", "")
+  if #name > 64 then name = name:sub(1, 64) end
+  if name == "" or name == "." or name == ".." then name = "suno_import" end
+  return name
+end
+
 -- Check if a file exists
 local function file_exists(path)
   local f = io.open(path, "r")
@@ -209,7 +254,7 @@ local function dir_exists(path)
   -- Fallback: try to list directory
   local cmd = is_windows()
     and ('cmd /c "if exist "' .. path .. '\\" (exit 0) else (exit 1)" 2>nul')
-    or  ('[ -d "' .. path:gsub('"', '\\"') .. '" ] && exit 0 || exit 1')
+    or  ('[ -d ' .. sh_quote(path) .. ' ] && exit 0 || exit 1')
   local ok = os.execute(cmd)
   return ok == 0 or ok == true
 end
@@ -222,7 +267,7 @@ local function mkdir_p(path)
   end
   local cmd = is_windows()
     and ('mkdir "' .. path .. '" 2>nul')
-    or  ('mkdir -p "' .. path:gsub('"', '\\"') .. '"')
+    or  ('mkdir -p ' .. sh_quote(path))
   os.execute(cmd)
   return dir_exists(path)
 end
@@ -231,7 +276,7 @@ local function rmdir_recursive(path)
   if is_windows() then
     os.execute('rmdir /s /q "' .. path .. '" 2>nul')
   else
-    os.execute('rm -rf "' .. path:gsub('"', '\\"') .. '"')
+    os.execute('rm -rf ' .. sh_quote(path))
   end
 end
 
@@ -256,7 +301,7 @@ local function list_dir_files(dir, fname_pattern)
   else
     local cmd = is_windows()
       and ('dir /b /a-d "' .. dir .. '" 2>nul')
-      or  ('ls -1p "' .. dir:gsub('"', '\\"') .. '" 2>/dev/null | grep -v /')
+      or  ('ls -1p ' .. sh_quote(dir) .. ' 2>/dev/null | grep -v /')
     local pipe = io.popen(cmd)
     if pipe then
       for line in pipe:lines() do
@@ -291,7 +336,7 @@ local function list_subdirs(dir)
   else
     local cmd = is_windows()
       and ('dir /b /ad "' .. dir .. '" 2>nul')
-      or  ('find "' .. dir:gsub('"', '\\"') .. '" -maxdepth 1 -mindepth 1 -type d 2>/dev/null')
+      or  ('find ' .. sh_quote(dir) .. ' -maxdepth 1 -mindepth 1 -type d 2>/dev/null')
     local pipe = io.popen(cmd)
     if pipe then
       for line in pipe:lines() do
@@ -345,8 +390,7 @@ local function list_zip_members(zip_path)
     end
     pipe:close()
   else
-    local zp = zip_path:gsub('"', '\\"')
-    local pipe = io.popen(('unzip -Z1 "%s" 2>/dev/null'):format(zp))
+    local pipe = io.popen('unzip -Z1 ' .. sh_quote(zip_path) .. ' 2>/dev/null')
     if not pipe then return nil end
     for raw in pipe:lines() do
       table.insert(names, raw)
@@ -394,9 +438,8 @@ local function unzip_to(zip_path, dest_dir)
     end
   else
     -- unzip ships with macOS and most Linux distros
-    local zp = zip_path:gsub('"', '\\"')
-    local dp = dest_dir:gsub('"', '\\"')
-    cmd = ('unzip -o "%s" -d "%s" >/dev/null 2>&1'):format(zp, dp)
+    cmd = 'unzip -o ' .. sh_quote(zip_path) .. ' -d ' .. sh_quote(dest_dir)
+          .. ' >/dev/null 2>&1'
     ok  = os.execute(cmd)
   end
 
@@ -413,27 +456,64 @@ end
 -- Minimal parser for flat JSON objects with string values.
 -- Handles the known structure of Suno's info.json without external deps.
 
+local JSON_ESCAPES = {
+  ['"'] = '"', ["\\"] = "\\", ["/"] = "/",
+  b = "\b", f = "\f", n = "\n", r = "\r", t = "\t",
+}
+
+-- Encode a Unicode code point as UTF-8 (Lua 5.4 has no utf8.char dependency
+-- here because REAPER's Lua build is not guaranteed to expose utf8.char).
+local function utf8_encode(cp)
+  if cp < 0x80 then
+    return string.char(cp)
+  elseif cp < 0x800 then
+    return string.char(0xC0 | (cp >> 6), 0x80 | (cp & 0x3F))
+  elseif cp < 0x10000 then
+    return string.char(0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3F),
+                       0x80 | (cp & 0x3F))
+  end
+  return string.char(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3F),
+                     0x80 | ((cp >> 6) & 0x3F), 0x80 | (cp & 0x3F))
+end
+
+-- Read a JSON string value for `key`.
+-- Only string values are accepted (a wrong/number/null value returns nil rather
+-- than silently returning some later string from the file), and \uXXXX escapes
+-- (including surrogate pairs) are decoded.
 local function json_string(json, key)
-  local pat_start = '"' .. key .. '"%s*:%s*"'
-  local s = json:find(pat_start)
+  local s, e = json:find('"' .. key .. '"%s*:%s*"')
   if not s then return nil end
 
-  -- Advance past key + colon + opening quote
-  local pos = json:find('"', s + #key + 1)
-  if not pos then return nil end
-  pos = pos + 1  -- skip opening quote
-
-  -- Read until unescaped closing quote
+  local pos   = e + 1              -- first character inside the value
   local chars = {}
+
   while pos <= #json do
     local c = json:sub(pos, pos)
     if c == '"' then
-      break
-    elseif c == '\\' then
+      return table.concat(chars)
+    elseif c == "\\" then
       local n = json:sub(pos + 1, pos + 1)
-      local map = { n="\n", t="\t", r="\r", ['"']='"', ["\\"]="\\", ["/"]="/" }
-      table.insert(chars, map[n] or (c .. n))
-      pos = pos + 2
+      if n == "u" then
+        local cp = tonumber(json:sub(pos + 2, pos + 5), 16)
+        if cp then
+          -- Combine UTF-16 surrogate pairs.
+          if cp >= 0xD800 and cp <= 0xDBFF and json:sub(pos + 6, pos + 7) == "\\u" then
+            local lo = tonumber(json:sub(pos + 8, pos + 11), 16)
+            if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+              cp  = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00)
+              pos = pos + 6
+            end
+          end
+          table.insert(chars, utf8_encode(cp))
+          pos = pos + 6
+        else
+          table.insert(chars, c .. n)
+          pos = pos + 2
+        end
+      else
+        table.insert(chars, JSON_ESCAPES[n] or (c .. n))
+        pos = pos + 2
+      end
     else
       table.insert(chars, c)
       pos = pos + 1
@@ -578,18 +658,27 @@ local function do_import()
   state.progress = 0.0
 
   -- ── 1. Extract ZIP ──────────────────────────────────────────────────────
-  local tmp_base   = trail(reaper.GetTempPath())
-  local stamp      = tostring(os.time()):sub(-6)  -- last 6 digits of epoch
-  local zip_name   = stripext(basename(state.zip_path))
-  state.temp_dir   = tmp_base .. "suno_" .. zip_name .. "_" .. stamp
+  local stamp    = tostring(os.time()):sub(-6)  -- last 6 digits of epoch
+  local zip_name = stripext(basename(state.zip_path))
+  -- Sanitised folder name: the path reaches os.execute / io.popen, so no shell
+  -- metacharacters from the user's filename may survive.
+  state.temp_dir = temp_base() .. "suno_" .. sanitize_component(zip_name)
+                   .. "_" .. stamp
 
   info("Extracting ZIP…")
   info("  From: " .. state.zip_path)
   info("  To:   " .. state.temp_dir)
 
+  local function cleanup()
+    if state.temp_dir and state.temp_dir ~= "" then
+      rmdir_recursive(state.temp_dir)
+    end
+  end
+
   local ok, extract_err = unzip_to(state.zip_path, state.temp_dir)
   if not ok then
     lerr("Extraction failed: " .. (extract_err or "unknown error"))
+    cleanup()
     state.phase = "error"
     return
   end
@@ -597,6 +686,17 @@ local function do_import()
   state.progress = 0.20
 
   -- ── 2. Locate files (search root + one level of subdirs) ────────────────
+  local AUDIO_EXTS = {
+    mp3 = true, wav = true, m4a = true, flac = true, ogg = true,
+    opus = true, aif = true, aiff = true,
+  }
+
+  local function ext_of(path)
+    return (basename(path):lower():match("%.([%w]+)$")) or ""
+  end
+
+  local function is_audio(path) return AUDIO_EXTS[ext_of(path)] == true end
+
   local function find_files(dir, pattern)
     local found = list_dir_files(dir, pattern)
     if #found == 0 then
@@ -625,9 +725,20 @@ local function do_import()
   state.progress = 0.35
 
   -- ── 4. Discover and classify audio files ────────────────────────────────
-  local audio_files = find_files(state.temp_dir, "%.[mw][p3av]+$")
+  local audio_files = {}
+  for _, f in ipairs(list_dir_files(state.temp_dir)) do
+    if is_audio(f) then table.insert(audio_files, f) end
+  end
   if #audio_files == 0 then
-    lerr("No audio files (MP3/WAV) found inside the ZIP.")
+    for _, sub in ipairs(list_subdirs(state.temp_dir)) do
+      for _, f in ipairs(list_dir_files(sub)) do
+        if is_audio(f) then table.insert(audio_files, f) end
+      end
+    end
+  end
+  if #audio_files == 0 then
+    lerr("No audio files found inside the ZIP.")
+    cleanup()
     state.phase = "error"
     return
   end
@@ -665,8 +776,7 @@ local function do_import()
   reaper.PreventUIRefresh(1)
 
   local insert_idx  = reaper.CountTracks(0)
-  local title_label = "[Suno] " .. state.meta.safe_title
-  local cancelled   = false
+  local title_label = "[Suno] " .. (state.meta.safe_title or "Suno Track")
 
   -- ── 6. Create folder track ──────────────────────────────────────────────
   local folder_track = insert_track(insert_idx, title_label, TRACK_COLOR.folder)
@@ -687,12 +797,6 @@ local function do_import()
   local last_track = nil
 
   for i, stem in ipairs(stems) do
-    if state.cancel then
-      cancelled = true
-      warn("Import cancelled.")
-      break
-    end
-
     local tname = ("[Suno] %s (%s)"):format(state.meta.safe_title, stem.label)
     local track  = insert_track(insert_idx, tname, stem.color)
     if not track then
@@ -714,10 +818,14 @@ local function do_import()
   -- depth=-1 on the last child closes the folder
   if last_track then
     reaper.SetMediaTrackInfo_Value(last_track, "I_FOLDERDEPTH", -1)
+  else
+    -- Nothing reached the project: don't leave a dangling open folder.
+    reaper.SetMediaTrackInfo_Value(folder_track, "I_FOLDERDEPTH", 0)
+    warn("No stems were imported — the folder track is empty.")
   end
 
-  -- Always balance Undo/PreventUIRefresh, even on cancel
-  if not cancelled then
+  -- Always balance Undo/PreventUIRefresh, even when the import is partial
+  do
     -- ── 8. Structural markers ───────────────────────────────────────────────
     if state.meta.prompt ~= "" and max_len > 0 then
       local sections = extract_structure(state.meta.prompt)
@@ -749,14 +857,14 @@ local function do_import()
   end
 
   reaper.PreventUIRefresh(-1)
-  reaper.Undo_EndBlock(cancelled and "Import Suno ZIP: cancelled" or ("Import Suno ZIP: " .. state.meta.title), -1)
+  reaper.Undo_EndBlock("Import Suno ZIP: " .. (state.meta.title or "untitled"), -1)
   reaper.UpdateArrange()
   reaper.TrackList_AdjustWindows(false)
   state.progress = 0.96
 
   -- ── 11. Cleanup temp dir ────────────────────────────────────────────────
   info("Cleaning up temp folder…")
-  rmdir_recursive(state.temp_dir)
+  cleanup()
 
   info(string.rep("─", 38))
   info(("Done!  \"%s\"  |  %d stems"):format(state.meta.title, #stems))

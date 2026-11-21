@@ -104,21 +104,31 @@ local SCRIPT_VERSION = "1.0.3"
 -- Ordered from most specific to least specific.
 -- `pattern`: matched against the lower-case source filename (no extension).
 local STEM_RULES = {
-  { pattern = "no[_%-]?drums?",    label = "No Drums",     color = 0xE84444 },
-  { pattern = "no[_%-]?bass",      label = "No Bass",      color = 0x4455E8 },
-  { pattern = "no[_%-]?vocals?",   label = "No Vocals",    color = 0xE83A7A },
-  { pattern = "instrumental",      label = "Instrumental", color = 0x3A8FE8 },
-  { pattern = "vocals?",           label = "Vocals",       color = 0xE83A7A },
-  { pattern = "drums?",            label = "Drums",        color = 0xE84444 },
-  { pattern = "bass",              label = "Bass",         color = 0x4455E8 },
-  { pattern = "guitar",            label = "Guitar",       color = 0x44CC55 },
-  { pattern = "piano",             label = "Piano",        color = 0xAA44EE },
-  { pattern = "strings?",          label = "Strings",      color = 0x44EEEE },
-  { pattern = "other",             label = "Other",        color = 0xEEAA33 },
+  { pattern = "no[_%-]?drums?",       label = "No Drums",       color = 0xD93838 },
+  { pattern = "no[_%-]?bass",         label = "No Bass",        color = 0x3B5BDB },
+  { pattern = "no[_%-]?vocals?",      label = "No Vocals",      color = 0xE64980 },
+  { pattern = "backing[_%-]?vocals?", label = "Backing Vocals", color = 0xF06595 },
+  { pattern = "lead[_%-]?vocals?",    label = "Lead Vocals",    color = 0xE64980 },
+  { pattern = "percussion",           label = "Percussion",     color = 0xE8590C },
+  { pattern = "perc",                 label = "Percussion",     color = 0xE8590C },
+  { pattern = "drums?",               label = "Drums",          color = 0xD93838 },
+  { pattern = "bass",                 label = "Bass",           color = 0x3B5BDB },
+  { pattern = "guitar",               label = "Guitar",         color = 0x2F9E44 },
+  { pattern = "keyboards?",           label = "Keys",           color = 0x845EF7 },
+  { pattern = "keys",                 label = "Keys",           color = 0x845EF7 },
+  { pattern = "piano",                label = "Piano",          color = 0x845EF7 },
+  { pattern = "synth",                label = "Synth",          color = 0x9C36B5 },
+  { pattern = "strings?",             label = "Strings",        color = 0x0CA678 },
+  { pattern = "brass",                label = "Brass",          color = 0x0CA678 },
+  { pattern = "woodwinds?",           label = "Woodwinds",      color = 0x0CA678 },
+  { pattern = "vocals?",              label = "Vocals",         color = 0xE64980 },
+  { pattern = "instrumental",         label = "Instrumental",   color = 0x1C7ED6 },
+  { pattern = "s?fx",                 label = "FX",             color = 0xF08C00 },
+  { pattern = "other",                label = "Other",          color = 0x868E96 },
 }
 
-local FOLDER_COLOR = 0x555566
-local BUS_COLOR    = 0x888866
+local FOLDER_COLOR = 0x4A4E5A
+local BUS_COLOR    = 0x5C5F66
 
 -- ─── UTILITIES ───────────────────────────────────────────────────────────────
 
@@ -332,7 +342,7 @@ local function Main()
 
     -- ── Rename + color stem tracks ──────────────────────────────────────
     for _, entry in ipairs(group.tracks) do
-      local tname = ("[Suno] %s (%s)"):format(song_name, entry.stem_label)
+      local tname = do_folder and entry.stem_label or (entry.stem_label .. " — " .. song_name)
       reaper.GetSetMediaTrackInfo_String(entry.track, "P_NAME", tname, true)
       reaper.SetTrackColor(entry.track, native_color(entry.stem_color))
     end

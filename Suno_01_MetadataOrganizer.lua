@@ -89,31 +89,50 @@ local SONG_PALETTE = {
 
 -- Stem-type → specific color (overrides song palette when a stem is detected)
 local STEM_COLOR = {
-  vocals       = 0xE83A7A,
-  instrumental = 0x3A8FE8,
-  drums        = 0xE84444,
-  bass         = 0x4455E8,
-  guitar       = 0x44CC55,
-  piano        = 0xAA44EE,
-  strings      = 0x44EEEE,
-  other        = 0xEEAA33,
-  ["no drums"] = 0xE84444,
-  ["no bass"]  = 0x4455E8,
-  ["no vocals"]= 0xE83A7A,
+  drums            = 0xD93838,
+  percussion       = 0xE8590C,
+  bass             = 0x3B5BDB,
+  guitar           = 0x2F9E44,
+  piano            = 0x845EF7,
+  keys             = 0x845EF7,
+  synth            = 0x9C36B5,
+  strings          = 0x0CA678,
+  brass            = 0x0CA678,
+  woodwinds        = 0x0CA678,
+  ["lead vocals"]  = 0xE64980,
+  vocals           = 0xE64980,
+  ["backing vocals"] = 0xF06595,
+  fx               = 0xF08C00,
+  instrumental     = 0x1C7ED6,
+  other            = 0x868E96,
+  ["no drums"]     = 0xD93838,
+  ["no bass"]      = 0x3B5BDB,
+  ["no vocals"]    = 0xE64980,
 }
 
 -- Stem suffix patterns checked against the lower-case filename (no extension)
 local STEM_RULES = {
-  { pattern = "no[_%-]?drums?",    name = "no drums"    },
-  { pattern = "no[_%-]?bass",      name = "no bass"     },
-  { pattern = "no[_%-]?vocals?",   name = "no vocals"   },
-  { pattern = "instrumental",      name = "instrumental"},
-  { pattern = "vocals?",           name = "vocals"      },
-  { pattern = "guitar",            name = "guitar"      },
-  { pattern = "piano",             name = "piano"       },
-  { pattern = "strings?",          name = "strings"     },
-  { pattern = "drums?",            name = "drums"       },
-  { pattern = "bass",              name = "bass"        },
+  { pattern = "no[_%-]?drums?",       name = "no drums"       },
+  { pattern = "no[_%-]?bass",         name = "no bass"        },
+  { pattern = "no[_%-]?vocals?",      name = "no vocals"      },
+  { pattern = "backing[_%-]?vocals?", name = "backing vocals" },
+  { pattern = "lead[_%-]?vocals?",    name = "lead vocals"    },
+  { pattern = "instrumental",         name = "instrumental"   },
+  { pattern = "vocals?",              name = "vocals"         },
+  { pattern = "percussion",           name = "percussion"     },
+  { pattern = "perc",                 name = "percussion"     },
+  { pattern = "guitar",               name = "guitar"         },
+  { pattern = "keyboards?",           name = "keys"           },
+  { pattern = "keys",                 name = "keys"           },
+  { pattern = "piano",                name = "piano"          },
+  { pattern = "synth",                name = "synth"          },
+  { pattern = "strings?",             name = "strings"        },
+  { pattern = "brass",                name = "brass"          },
+  { pattern = "woodwinds?",           name = "woodwinds"      },
+  { pattern = "drums?",               name = "drums"          },
+  { pattern = "bass",                 name = "bass"           },
+  { pattern = "s?fx",                 name = "fx"             },
+  { pattern = "other",                name = "other"          },
 }
 
 -- ─── UTILITIES ──────────────────────────────────────────────────────────────
@@ -252,7 +271,8 @@ local function Main()
     -- ── Rename track ────────────────────────────────────────────────────
     local label = song_name
     if stem_type then
-      label = song_name .. " [" .. stem_type:gsub("^(%l)", string.upper) .. "]"
+      local title_stem = stem_type:gsub("(%a)([%w']*)", function(a, b) return a:upper() .. b end)
+      label = title_stem .. " — " .. song_name
     end
     reaper.GetSetMediaTrackInfo_String(track, "P_NAME", label, true)
 

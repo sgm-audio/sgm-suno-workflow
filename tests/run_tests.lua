@@ -67,8 +67,8 @@ test("parses Suno filename, strips hex ID, detects stem and renames track", func
   local err = mock.run_script(r, "Suno_01_MetadataOrganizer.lua")
   eq(err, nil, "script execution error")
 
-  eq(t1.name, "Neon Dreams [Vocals]", "t1 track name")
-  eq(t2.name, "Neon Dreams [Drums]", "t2 track name")
+  eq(t1.name, "Vocals — Neon Dreams", "t1 track name")
+  eq(t2.name, "Drums — Neon Dreams", "t2 track name")
   eq(t1.color ~= nil, true, "t1 colored")
   eq(t2.color ~= nil, true, "t2 colored")
   eq(#r._markers, 2, "2 regions created")
@@ -281,8 +281,8 @@ test("aligns stems to earliest start, creates folder and summing bus", function(
   approx(it_drm.position, 1.0, 0.001, "drums at ref_pos 1.0")
 
   -- Check track names
-  eq(t_voc.name, "[Suno] Starlight (Vocals)", "vocals track name")
-  eq(t_drm.name, "[Suno] Starlight (Drums)", "drums track name")
+  eq(t_voc.name, "Vocals", "vocals track name")
+  eq(t_drm.name, "Drums", "drums track name")
 
   -- Check total tracks: original 2 stems + 1 folder track + 1 bus track = 4 tracks
   eq(r.CountTracks(), 4, "4 total tracks created")
@@ -325,7 +325,7 @@ test("01: resolves parent source and counts unique songs for stem-only project",
   r._user_input_default = "all,no,yes"
   local err = mock.run_script(r, "Suno_01_MetadataOrganizer.lua")
   eq(err, nil, "script error")
-  eq(t1.name, "Echo [Vocals]", "parent source resolved")
+  eq(t1.name, "Vocals — Echo", "parent source resolved")
   contains(r._mb_prompts[1].text, "Songs     : 1 unique title", "unique song count")
 end)
 
@@ -418,6 +418,8 @@ test("imports Suno ZIP, parses info.json, creates tracks/markers/notes, keeps au
     .. 'z.writestr("info.json", json.dumps({"title":"Midnight Pulse","tags":"synthwave",'
     .. '"prompt":"[Intro]\\nHello\\n[Chorus]\\nWorld"})); '
     .. 'z.writestr("vocals.wav", "RIFFDATA"); '
+    .. 'z.writestr("vocals.mp3", "MP3DATA"); '
+    .. 'z.writestr("__MACOSX/._vocals.wav", "JUNK"); '
     .. 'z.writestr("instrumental.wav", "RIFFDATA"); '
     .. 'z.close()\'',
     zip_file))
@@ -437,10 +439,10 @@ test("imports Suno ZIP, parses info.json, creates tracks/markers/notes, keeps au
 
   local err = mock.run_script(r, "Various/SGM_Suno ZIP Importer.lua")
   eq(err, nil, "ZIP Importer error")
-  eq(r.CountTracks(), 3, "folder + 2 stem tracks created")
+  eq(r.CountTracks(), 3, "folder + 2 deduplicated stem tracks created")
   eq(r.GetTrack(0, 0).name, "[Suno] Midnight Pulse", "folder track name from info.json")
-  eq(r.GetTrack(0, 1).name, "[Suno] Midnight Pulse (Instrumental)", "instrumental track")
-  eq(r.GetTrack(0, 2).name, "[Suno] Midnight Pulse (Vocals)", "vocals track")
+  eq(r.GetTrack(0, 1).name, "Vocals", "vocals track sorted before instrumental")
+  eq(r.GetTrack(0, 2).name, "Instrumental", "instrumental track")
   eq(#r._markers, 2, "2 structural markers placed")
   contains(r._project_notes, "Midnight Pulse", "project notes contain title")
   contains(r._project_notes, "[Chorus]", "project notes contain lyrics")

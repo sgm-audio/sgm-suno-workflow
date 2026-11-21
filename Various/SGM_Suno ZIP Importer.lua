@@ -115,29 +115,47 @@ local SCRIPT_VERSION = "1.1.2"
 local WINDOW_W       = 640
 local WINDOW_H       = 520
 
--- 0xRRGGBB track colors
+-- 0xRRGGBB track colors (organized by instrument family)
 local TRACK_COLOR = {
-  folder       = 0x555566,
-  instrumental = 0x3A8FE8,
-  vocals       = 0xE83A7A,
-  drums        = 0xE84444,
-  bass         = 0x4455E8,
-  guitar       = 0x44CC55,
-  other        = 0xEEAA33,
+  folder       = 0x4A4E5A,
+  drums        = 0xD93838,
+  percussion   = 0xE8590C,
+  bass         = 0x3B5BDB,
+  guitar       = 0x2F9E44,
+  keys         = 0x845EF7,
+  synth        = 0x9C36B5,
+  strings      = 0x0CA678,
+  vocals       = 0xE64980,
+  backing_vox  = 0xF06595,
+  fx           = 0xF08C00,
+  instrumental = 0x1C7ED6,
+  other        = 0x868E96,
 }
 
 -- Stem detection rules: ordered by priority (most specific first)
 -- `pattern` matched against the lowercase filename (no extension)
 local STEM_RULES = {
-  { pattern = "no[_%-]?drums?",    label = "No Drums",     color = TRACK_COLOR.drums        },
-  { pattern = "no[_%-]?bass",      label = "No Bass",      color = TRACK_COLOR.bass         },
-  { pattern = "no[_%-]?vocals?",   label = "No Vocals",    color = TRACK_COLOR.vocals       },
-  { pattern = "instrumental",      label = "Instrumental", color = TRACK_COLOR.instrumental },
-  { pattern = "vocals?",           label = "Vocals",       color = TRACK_COLOR.vocals       },
-  { pattern = "guitar",            label = "Guitar",       color = TRACK_COLOR.guitar       },
-  { pattern = "piano",             label = "Piano",        color = TRACK_COLOR.other        },
-  { pattern = "drums?",            label = "Drums",        color = TRACK_COLOR.drums        },
-  { pattern = "bass",              label = "Bass",         color = TRACK_COLOR.bass         },
+  { pattern = "no[_%-]?drums?",      label = "No Drums",       color = TRACK_COLOR.drums,        order = 90 },
+  { pattern = "no[_%-]?bass",        label = "No Bass",        color = TRACK_COLOR.bass,         order = 91 },
+  { pattern = "no[_%-]?vocals?",     label = "No Vocals",      color = TRACK_COLOR.vocals,       order = 92 },
+  { pattern = "backing[_%-]?vocals?",label = "Backing Vocals", color = TRACK_COLOR.backing_vox,  order = 12 },
+  { pattern = "lead[_%-]?vocals?",   label = "Lead Vocals",    color = TRACK_COLOR.vocals,       order = 10 },
+  { pattern = "percussion",          label = "Percussion",     color = TRACK_COLOR.percussion,   order = 2  },
+  { pattern = "perc",                label = "Percussion",     color = TRACK_COLOR.percussion,   order = 2  },
+  { pattern = "drums?",              label = "Drums",          color = TRACK_COLOR.drums,        order = 1  },
+  { pattern = "bass",                label = "Bass",           color = TRACK_COLOR.bass,         order = 3  },
+  { pattern = "guitar",              label = "Guitar",         color = TRACK_COLOR.guitar,       order = 4  },
+  { pattern = "keyboards?",          label = "Keys",           color = TRACK_COLOR.keys,         order = 5  },
+  { pattern = "keys",                label = "Keys",           color = TRACK_COLOR.keys,         order = 5  },
+  { pattern = "piano",               label = "Piano",          color = TRACK_COLOR.keys,         order = 5  },
+  { pattern = "synth",               label = "Synth",          color = TRACK_COLOR.synth,        order = 6  },
+  { pattern = "strings?",            label = "Strings",        color = TRACK_COLOR.strings,      order = 7  },
+  { pattern = "brass",               label = "Brass",          color = TRACK_COLOR.strings,      order = 8  },
+  { pattern = "woodwinds?",          label = "Woodwinds",      color = TRACK_COLOR.strings,      order = 9  },
+  { pattern = "vocals?",             label = "Vocals",         color = TRACK_COLOR.vocals,       order = 11 },
+  { pattern = "instrumental",        label = "Instrumental",   color = TRACK_COLOR.instrumental, order = 20 },
+  { pattern = "s?fx",                label = "FX",             color = TRACK_COLOR.fx,           order = 13 },
+  { pattern = "other",               label = "Other",          color = TRACK_COLOR.other,        order = 14 },
 }
 
 -- Song structure tags Suno embeds in lyrics/prompt
@@ -582,17 +600,23 @@ local function do_import()
   info("Extraction OK.")
   state.progress = 0.20
 
-  -- ── 2. Locate files recursively ─────────────────────────────────────────
+  -- ── 2. Locate files recursively (skip __MACOSX and AppleDouble ._* files)
   local function find_files(dir, predicate)
     local found = {}
     for _, f in ipairs(list_dir_files(dir)) do
-      if (not predicate) or predicate(f) then
-        table.insert(found, f)
+      local bname = basename(f)
+      if not bname:match("^%._") and not bname:match("^%.") then
+        if (not predicate) or predicate(f) then
+          table.insert(found, f)
+        end
       end
     end
     for _, sub in ipairs(list_subdirs(dir)) do
-      for _, f in ipairs(find_files(sub, predicate)) do
-        table.insert(found, f)
+      local sname = basename(sub)
+      if sname ~= "__MACOSX" and not sname:match("^%.") then
+        for _, f in ipairs(find_files(sub, predicate)) do
+          table.insert(found, f)
+        end
       end
     end
     return found
@@ -615,37 +639,74 @@ local function do_import()
   end
   state.progress = 0.35
 
-  -- ── 4. Discover and classify audio files ────────────────────────────────
-  local audio_files = find_files(state.temp_dir, is_audio_filename)
-  if #audio_files == 0 then
+  -- ── 4. Discover, deduplicate, and classify audio files ──────────────────
+  local raw_audio_files = find_files(state.temp_dir, is_audio_filename)
+  if #raw_audio_files == 0 then
     lerr("No audio files (WAV/MP3/FLAC/OGG/M4A/AIFF) found inside the ZIP.")
     rmdir_recursive(state.temp_dir)
     state.phase = "error"
     return
   end
-  info(("Found %d audio file(s)."):format(#audio_files))
+
+  -- Deduplicate files with the same stem basename (e.g. vocals.wav + vocals.mp3),
+  -- preferring lossless formats over lossy ones.
+  local ext_rank = { wav=1, flac=2, aiff=3, aif=4, mp3=5, ogg=6, m4a=7 }
+  local by_base = {}
+  local audio_files = {}
+  for _, fpath in ipairs(raw_audio_files) do
+    local bname = stripext(basename(fpath)):lower()
+    local ext   = (fpath:match("%.([^%.]+)$") or ""):lower()
+    local rank  = ext_rank[ext] or 99
+    if not by_base[bname] or rank < by_base[bname].rank then
+      by_base[bname] = { path = fpath, rank = rank }
+    end
+  end
+  for _, entry in pairs(by_base) do
+    table.insert(audio_files, entry.path)
+  end
+  info(("Found %d unique stem file(s) (from %d audio file(s))."):format(#audio_files, #raw_audio_files))
 
   local stems = {}
+  local seen_labels = {}
   for _, fpath in ipairs(audio_files) do
-    local fname = stripext(basename(fpath)):lower()
-    local matched = false
+    local raw_base = stripext(basename(fpath))
+    local fname    = raw_base:lower()
+    local matched  = false
     for _, rule in ipairs(STEM_RULES) do
       if fname:match(rule.pattern) then
-        table.insert(stems, { path=fpath, label=rule.label, color=rule.color })
+        local lbl = rule.label
+        if seen_labels[lbl] then
+          seen_labels[lbl] = seen_labels[lbl] + 1
+          lbl = ("%s %d"):format(lbl, seen_labels[lbl])
+        else
+          seen_labels[lbl] = 1
+        end
+        table.insert(stems, {
+          path  = fpath,
+          label = lbl,
+          color = rule.color,
+          order = rule.order or 50,
+        })
         matched = true
         break
       end
     end
     if not matched then
-      local label = stripext(basename(fpath))
-      table.insert(stems, { path=fpath, label=label, color=TRACK_COLOR.other })
+      -- Strip trailing Suno ID if present so fallback label is clean
+      local clean = raw_base:match("^(.-)_%w%w%w%w%w%w%w%w+$") or raw_base
+      table.insert(stems, {
+        path  = fpath,
+        label = clean,
+        color = TRACK_COLOR.other,
+        order = 50,
+      })
     end
   end
 
-  -- Sort: instrumental first, then vocals, then the rest
-  local order = { Instrumental=1, Vocals=2 }
+  -- Sort in standard DAW mix order
   table.sort(stems, function(a, b)
-    return (order[a.label] or 99) < (order[b.label] or 99)
+    if a.order ~= b.order then return a.order < b.order end
+    return a.label < b.label
   end)
   state.progress = 0.42
 
@@ -685,8 +746,10 @@ local function do_import()
       break
     end
 
-    local tname = ("[Suno] %s (%s)"):format(state.meta.safe_title, stem.label)
-    local track  = insert_track(insert_idx, tname, stem.color)
+    -- Child tracks live inside the "[Suno] <Song Title>" folder, so name them
+    -- by their stem role directly (readable in TCP and Mixer).
+    local tname = stem.label
+    local track = insert_track(insert_idx, tname, stem.color)
     if not track then
       warn(("Skipped '%s' — could not create track."):format(stem.label))
     else

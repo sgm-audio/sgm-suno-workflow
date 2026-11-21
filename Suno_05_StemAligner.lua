@@ -1,7 +1,12 @@
 -- @description Organise third-party stem separations (UVR5, Demucs, Fadr) into a mix-ready layout
 -- @author Scott Mills
--- @version 1.0.2
+-- @version 1.0.3
 -- @changelog
+--   1.0.3 (2026-11-20)
+--     + Resolve parent source for section/reversed items and guard empty filenames
+--     + Allow creating summing bus even when folder creation is disabled
+--     + Guard CreateTrackSend return value and fix CSV parsing
+--     + Remove unused fname_lower parameter in extract_song_name
 --   1.0.2 (2026-11-06)
 --     + Fix song-name extraction: validate Suno ID length (not song part), strip stem after ID removal
 --     + Folder/bus indices now computed from live track numbers (safe for interleaved groups)
@@ -92,7 +97,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Stem Aligner"
-local SCRIPT_VERSION = "1.0.2"
+local SCRIPT_VERSION = "1.0.3"
 
 -- ─── STEM CLASSIFICATION ─────────────────────────────────────────────────────
 
@@ -144,7 +149,11 @@ local function source_basename(track)
   if not take or reaper.TakeIsMIDI(take) then return nil end
   local src  = reaper.GetMediaItemTake_Source(take)
   if not src then return nil end
-  local full = reaper.GetMediaSourceFileName(src, "")
+  while reaper.GetMediaSourceParent and reaper.GetMediaSourceParent(src) do
+    src = reaper.GetMediaSourceParent(src)
+  end
+  local full = reaper.GetMediaSourceFileName(src)
+  if not full or full == "" then return nil end
   local base = full:match("[/\\]([^/\\]+)$") or full
   -- Strip extension
   return base:match("^(.+)%.[^%.]+$") or base
@@ -163,7 +172,7 @@ end
 
 -- Extract the "song name" from a stem filename by stripping known stem suffixes
 -- and the trailing Suno ID (alphanumeric, 8–32 chars after the last underscore).
-local function extract_song_name(fname_lower, raw_fname)
+local function extract_song_name(raw_fname)
   local name = raw_fname  -- preserve original case for display
 
   -- Strip Suno ID FIRST (last _XXXXXXXX segment).
@@ -201,7 +210,7 @@ local function build_groups()
     local stem_label, stem_color = classify_stem(fname_lower)
     if not stem_label then goto next_track end  -- skip non-stem tracks
 
-    local song_name = extract_song_name(fname_lower, basename)
+    local song_name = extract_song_name(basename)
     local key       = song_name:lower()
 
     if not group_map[key] then
@@ -281,7 +290,10 @@ local function Main()
   if not ok then return end
 
   local parts = {}
-  for p in csv:gmatch("[^,]+") do table.insert(parts, trim(p):lower()) end
+  for p in (csv .. ","):gmatch("([^,]*),") do
+    local t = trim(p):lower()
+    table.insert(parts, t ~= "" and t or nil)
+  end
   local do_align  = (parts[1] or "yes") ~= "no"
   local do_folder = (parts[2] or "yes") ~= "no"
   local do_bus    = (parts[3] or "yes") ~= "no"
@@ -342,8 +354,6 @@ local function Main()
     -- Strategy: find the track index of the first stem in this group,
     -- insert the folder track immediately before it.
     if do_folder then
-      -- Get current indices (may have shifted due to prior insertions).
-      -- Use the group's own tracks — never assume they are contiguous.
       local min_idx = math.huge
       local max_idx = -1
       for _, entry in ipairs(group.tracks) do
@@ -372,29 +382,34 @@ local function Main()
       end
 
       n_folders = n_folders + 1
+    end
 
-      -- ── Create summing bus ────────────────────────────────────────────
-      if do_bus then
-        -- Bus goes AFTER the last stem (just after the folder closes)
-        local bus_idx   = max_idx + 2
-        local bus_name  = ("[Suno] %s  [BUS]"):format(song_name)
-        local bus_track = insert_named_track(bus_idx, bus_name, BUS_COLOR)
-        if bus_track then
-          -- Route each stem (live indices: folder pushed them down by 1)
-          for _, entry in ipairs(group.tracks) do
-            local stem_idx   = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
-            local stem_track = reaper.GetTrack(0, stem_idx)
-            if stem_track then
-              local send_idx = create_send(stem_track, bus_track)
+    -- ── Create summing bus ──────────────────────────────────────────────
+    if do_bus then
+      local max_idx = -1
+      for _, entry in ipairs(group.tracks) do
+        local idx = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
+        if idx > max_idx then max_idx = idx end
+      end
+      local bus_idx   = max_idx + 1
+      local bus_name  = ("[Suno] %s  [BUS]"):format(song_name)
+      local bus_track = insert_named_track(bus_idx, bus_name, BUS_COLOR)
+      if bus_track then
+        for _, entry in ipairs(group.tracks) do
+          local stem_idx   = reaper.GetMediaTrackInfo_Value(entry.track, "IP_TRACKNUMBER") - 1
+          local stem_track = reaper.GetTrack(0, stem_idx)
+          if stem_track then
+            local send_idx = create_send(stem_track, bus_track)
+            if send_idx >= 0 then
               -- Set to post-fader
               reaper.SetTrackSendInfo_Value(stem_track, 0, send_idx, "I_SENDMODE", 0)
             end
           end
-
-          reaper.ShowConsoleMsg(
-            ("  Bus created: \"%s\"\n"):format(bus_name))
-          n_buses = n_buses + 1
         end
+
+        reaper.ShowConsoleMsg(
+          ("  Bus created: \"%s\"\n"):format(bus_name))
+        n_buses = n_buses + 1
       end
     end
 

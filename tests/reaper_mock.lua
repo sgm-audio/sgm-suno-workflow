@@ -73,11 +73,12 @@ function mock.new()
   function r.GetOS() return "Linux" end
   function r.GetAppVersion() return "7.83/linux" end
   function r.time_precise() return 1.0 end
-  function r.defer(f) end
+  function r.defer(_f) end
   function r.UpdateArrange() end
   function r.TrackList_AdjustWindows() end
   function r.UpdateTimeline() end
-  function r.UpdateItemInProject(item) end
+  function r.UpdateItemInProject(_item) end
+  function r.Main_OnCommand(_cmd, _flag) end
 
   -- Dialogs
   function r.MB(text, title, mtype)
@@ -85,7 +86,7 @@ function mock.new()
     return r._mb_answer
   end
 
-  function r.GetUserInputs(title, num_inputs, captions_csv, retvals_csv)
+  function r.GetUserInputs(_title, _num_inputs, _captions_csv, retvals_csv)
     local val = r._user_inputs[1]
     if val ~= nil then
       table.remove(r._user_inputs, 1)
@@ -101,7 +102,7 @@ function mock.new()
     r._undo_begin_count = r._undo_begin_count + 1
     r._undo_depth = r._undo_depth + 1
   end
-  function r.Undo_EndBlock(desc, extraflags)
+  function r.Undo_EndBlock(_desc, _extraflags)
     r._undo_end_count = r._undo_end_count + 1
     r._undo_depth = r._undo_depth - 1
   end
@@ -111,8 +112,8 @@ function mock.new()
 
   -- Cursor & Time
   function r.GetCursorPosition() return r._cursor_pos end
-  function r.SetEditCurPos(pos, moveview, seekplay) r._cursor_pos = pos end
-  function r.GetSet_LoopTimeRange(isSet, isLoop, start_t, end_t, allowautoseek)
+  function r.SetEditCurPos(pos, _moveview, _seekplay) r._cursor_pos = pos end
+  function r.GetSet_LoopTimeRange(isSet, _isLoop, start_t, end_t, _allowautoseek)
     if isSet then
       r._loop_start = start_t
       r._loop_end = end_t
@@ -127,8 +128,8 @@ function mock.new()
 
   -- Tracks
   function r.CountTracks() return #r._tracks end
-  function r.GetTrack(proj, i) return r._tracks[i + 1] end
-  function r.InsertTrackAtIndex(idx, wantDefaults)
+  function r.GetTrack(_proj, i) return r._tracks[i + 1] end
+  function r.InsertTrackAtIndex(idx, _wantDefaults)
     local t = new_track("")
     table.insert(r._tracks, idx + 1, t)
     return t
@@ -187,7 +188,7 @@ function mock.new()
   function r.CountSelectedMediaItems()
     return #r._selected_items
   end
-  function r.GetSelectedMediaItem(proj, idx)
+  function r.GetSelectedMediaItem(_proj, idx)
     return r._selected_items[idx + 1]
   end
 
@@ -237,7 +238,10 @@ function mock.new()
   end
 
   -- Sources
-  function r.GetMediaSourceFileName(src, buf)
+  function r.GetMediaSourceParent(src)
+    return src and src.parent or nil
+  end
+  function r.GetMediaSourceFileName(src, _buf)
     return src and src.filename or ""
   end
   function r.GetMediaSourceNumChannels(src)
@@ -256,27 +260,28 @@ function mock.new()
     })
   end
 
-  function r.MediaItemTake_GetPeaks(tk, peakrate, starttime, num_chans, n_req, want_extra_type, buf)
+  function r.GetMediaItemTake_Peaks(tk, peakrate, starttime, num_chans, n_req, _want_extra_type, buf)
     if not tk then return 0 end
-    local n = n_req
-    -- If custom peaks are provided on take:
-    if tk.peaks then
-      for c = 0, num_chans - 1 do
-        for s = 1, n do
-          local p = tk.peaks[s] or 0.25
-          buf[c * n + s] = p
-        end
-      end
-      return n
+    local item_pos = tk.item and tk.item.position or 0.0
+    local item_len = tk.item and tk.item.length or 10.0
+    if starttime < item_pos - 1e-6 or starttime >= item_pos + item_len then
+      return 0
     end
-    -- Synthetic peaks: oscillating peaks with periodic beats
-    for c = 0, num_chans - 1 do
-      for s = 1, n do
-        local t = (s - 1) / peakrate
-        -- 2 Hz beat pulse (120 BPM)
+    local n = math.min(n_req, math.ceil((item_pos + item_len - starttime) * peakrate))
+    if n <= 0 then return 0 end
+    local offset_samples = math.floor((starttime - item_pos) * peakrate + 0.5)
+    for s = 1, n do
+      local val
+      if tk.peaks then
+        val = tk.peaks[offset_samples + s] or 0.25
+      else
+        local t = (offset_samples + s - 1) / peakrate
         local pulse = math.abs(math.sin(t * math.pi * 2.0))
-        local val = 0.1 + 0.6 * (pulse ^ 8)
-        buf[c * n + s] = val
+        val = 0.1 + 0.6 * (pulse ^ 8)
+      end
+      for c = 0, num_chans - 1 do
+        buf[(s - 1) * num_chans + c + 1] = val
+        buf[n * num_chans + (s - 1) * num_chans + c + 1] = -val
       end
     end
     return n
@@ -310,7 +315,7 @@ function mock.new()
   end
 
   -- Markers & Regions
-  function r.AddProjectMarker2(proj, isrgn, pos, rgnend, name, wantidx, color)
+  function r.AddProjectMarker2(_proj, isrgn, pos, rgnend, name, _wantidx, color)
     local idx = #r._markers + 1
     r._markers[idx] = {
       isrgn = isrgn,
@@ -323,15 +328,30 @@ function mock.new()
   end
 
   -- Tempo markers
-  function r.CountTempoTimeSigMarkers(proj)
+  function r.CountTempoTimeSigMarkers(_proj)
     return #r._tempo_markers
   end
-  function r.GetTempoTimeSigMarker(proj, idx)
+  function r.GetTempoTimeSigMarker(_proj, idx)
     local m = r._tempo_markers[idx + 1]
     if not m then return false end
-    return true, m.pos, m.bpm, m.ts_num, m.ts_den, m.linear
+    return true, m.pos, 0, 0.0, m.bpm, m.ts_num, m.ts_den, m.linear
   end
-  function r.SetTempoTimeSigMarker(proj, idx, pos, measurepos, beatpos, bpm, ts_num, ts_den, linear)
+  function r.DeleteTempoTimeSigMarker(_proj, idx)
+    if idx < 0 or idx >= #r._tempo_markers then return false end
+    table.remove(r._tempo_markers, idx + 1)
+    return true
+  end
+  function r.SetTempoTimeSigMarker(_proj, idx, pos, _measurepos, _beatpos, bpm, ts_num, ts_den, linear)
+    if idx == -1 then
+      table.insert(r._tempo_markers, {
+        pos = pos,
+        bpm = bpm,
+        ts_num = ts_num,
+        ts_den = ts_den,
+        linear = linear,
+      })
+      return true
+    end
     local m = r._tempo_markers[idx + 1]
     if not m then return false end
     m.pos = pos
@@ -341,7 +361,7 @@ function mock.new()
     m.linear = linear
     return true
   end
-  function r.AddTempoTimeSigMarker(proj, pos, bpm, ts_num, ts_den, linear)
+  function r.AddTempoTimeSigMarker(_proj, pos, bpm, ts_num, ts_den, linear)
     local m = {
       pos = pos,
       bpm = bpm,
@@ -365,17 +385,148 @@ function mock.new()
     src.sends[#src.sends + 1] = send
     return #src.sends - 1
   end
-  function r.SetTrackSendInfo_Value(tr, cat, idx, key, val)
+  function r.SetTrackSendInfo_Value(tr, _cat, idx, key, val)
     if not tr or not tr.sends[idx + 1] then return false end
     tr.sends[idx + 1][key] = val
     return true
   end
 
   -- Project Notes
-  function r.GetSetProjectNotes(proj, set, notes)
+  function r.GetSetProjectNotes(_proj, set, notes)
     if set then r._project_notes = notes end
     return r._project_notes
   end
+
+  -- Paths & Filesystem (for ZIP Importer tests)
+  r._project_path = ""
+  r._resource_path = ""
+  function r.GetProjectPath() return r._project_path end
+  function r.GetResourcePath() return r._resource_path end
+  function r.CF_GetSWSVersion() return "2.14.0" end
+  function r.file_exists(path)
+    local f = io.open(path, "r")
+    if f then f:close(); return true end
+    return false
+  end
+  function r.RecursiveCreateDirectory(path, _ignored)
+    os.execute('mkdir -p "' .. tostring(path):gsub('"', '\\"') .. '"')
+    return 1
+  end
+  function r.EnumerateFiles(dir, idx)
+    local p = io.popen('ls -1p "' .. tostring(dir):gsub('"', '\\"') .. '" 2>/dev/null | grep -v /')
+    if not p then return nil end
+    local i = 0
+    local found = nil
+    for line in p:lines() do
+      if i == idx then found = line; break end
+      i = i + 1
+    end
+    p:close()
+    return found
+  end
+  function r.EnumerateSubdirectories(dir, idx)
+    local p = io.popen('ls -1p "' .. tostring(dir):gsub('"', '\\"') .. '" 2>/dev/null | grep /')
+    if not p then return nil end
+    local i = 0
+    local found = nil
+    for line in p:lines() do
+      if i == idx then found = line:gsub("/$", ""); break end
+      i = i + 1
+    end
+    p:close()
+    return found
+  end
+
+  -- Media creation (for ZIP Importer tests)
+  function r.PCM_Source_CreateFromFile(filepath)
+    if not r.file_exists(filepath) then return nil end
+    return { filename = filepath, channels = 2, samplerate = 44100, length = 12.0 }
+  end
+  function r.AddMediaItemToTrack(tr)
+    if not tr then return nil end
+    local it = {
+      position = 0.0,
+      length = 0.0,
+      vol = 1.0,
+      fadein = 0.0,
+      fadeout = 0.0,
+      mute = 0,
+      takes = {},
+      track = tr,
+    }
+    tr.items[#tr.items + 1] = it
+    return it
+  end
+  function r.AddTakeToMediaItem(it)
+    if not it then return nil end
+    local tk = { item = it, name = "", is_midi = false, source = nil }
+    it.takes[#it.takes + 1] = tk
+    return tk
+  end
+  function r.SetMediaItemTake_Source(tk, src)
+    if not tk then return false end
+    tk.source = src
+    return true
+  end
+  function r.DeleteTrackMediaItem(tr, it)
+    if not tr or not it then return false end
+    for i, v in ipairs(tr.items) do
+      if v == it then table.remove(tr.items, i); return true end
+    end
+    return false
+  end
+
+  -- Minimal ReaImGui stubs for headless testing
+  r._imgui_browse_path = ""
+  r._imgui_trigger_browse = false
+  r._imgui_trigger_import = false
+  r._imgui_open = false
+  function r.ImGui_CreateContext(_name) return { _ctx = true } end
+  function r.ImGui_ColorConvertDouble4ToU32(_r, _g, _b, _a) return 0xFFFFFFFF end
+  function r.ImGui_WindowFlags_NoCollapse() return 1 end
+  function r.ImGui_WindowFlags_NoResize() return 2 end
+  function r.ImGui_Cond_Once() return 1 end
+  function r.ImGui_InputTextFlags_ReadOnly() return 1 end
+  function r.ImGui_Col_Text() return 0 end
+  function r.ImGui_SetNextWindowSize(_ctx, _w, _h, _cond) end
+  function r.ImGui_Begin(_ctx, _title, _open, _flags) return true, r._imgui_open end
+  function r.ImGui_End(_ctx) end
+  function r.ImGui_TextColored(_ctx, _col, _txt) end
+  function r.ImGui_Text(_ctx, _txt) end
+  function r.ImGui_TextWrapped(_ctx, _txt) end
+  function r.ImGui_Separator(_ctx) end
+  function r.ImGui_Spacing(_ctx) end
+  function r.ImGui_SameLine(_ctx) end
+  function r.ImGui_GetContentRegionAvail(_ctx) return 500, 400 end
+  function r.ImGui_SetNextItemWidth(_ctx, _w) end
+  function r.ImGui_InputText(_ctx, _lbl, val, _flags) return false, val end
+  function r.ImGui_BeginDisabled(_ctx, _d) end
+  function r.ImGui_EndDisabled(_ctx) end
+  function r.ImGui_Button(_ctx, lbl)
+    if lbl:find("Browse") and r._imgui_trigger_browse then
+      r._imgui_trigger_browse = false
+      return true
+    end
+    if lbl:find("Import") and r._imgui_trigger_import then
+      r._imgui_trigger_import = false
+      return true
+    end
+    return false
+  end
+  function r.GetUserFileNameForRead(_fn, _title, _ext)
+    if r._imgui_browse_path ~= "" then
+      return true, r._imgui_browse_path
+    end
+    return false, ""
+  end
+  function r.ImGui_ProgressBar(_ctx, _frac, _w, _h, _overlay) end
+  function r.ImGui_BeginChild(_ctx, _id, _w, _h) return true end
+  function r.ImGui_EndChild(_ctx) end
+  function r.ImGui_PushStyleColor(_ctx, _idx, _col) end
+  function r.ImGui_PopStyleColor(_ctx) end
+  function r.ImGui_GetScrollY(_ctx) return 0 end
+  function r.ImGui_GetScrollMaxY(_ctx) return 0 end
+  function r.ImGui_SetScrollHereY(_ctx, _y) end
 
   return r
 end
@@ -387,7 +538,7 @@ function mock.add_track(r, name)
   return t
 end
 
-function mock.add_item_to_track(r, track, opts)
+function mock.add_item_to_track(_r, track, opts)
   opts = opts or {}
   opts.track = track
   local it = new_item(opts)

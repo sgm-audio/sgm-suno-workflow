@@ -311,6 +311,179 @@ test("bundle script compiles and runs without error", function()
 end)
 
 print("----------------------------------------------------------------------")
+print("Regression & Edge-Case Tests (01-05)")
+print("----------------------------------------------------------------------")
+
+test("01: resolves parent source and counts unique songs for stem-only project", function()
+  local r = mock.new()
+  local t1 = mock.add_track(r, "T1")
+  local t2 = mock.add_track(r, "T2")
+  local it1 = mock.add_item_to_track(r, t1, { filename = "" })
+  it1.takes[1].source = { filename = "", parent = { filename = "/music/Echo_vocals_12345678.wav" } }
+  mock.add_item_to_track(r, t2, { filename = "/music/Echo_drums_12345678.wav" })
+
+  r._user_input_default = "all,no,yes"
+  local err = mock.run_script(r, "Suno_01_MetadataOrganizer.lua")
+  eq(err, nil, "script error")
+  eq(t1.name, "Echo [Vocals]", "parent source resolved")
+  contains(r._mb_prompts[1].text, "Songs     : 1 unique title", "unique song count")
+end)
+
+test("02: auto-detects BPM on item at non-zero position and replaces prior marker", function()
+  local r = mock.new()
+  local t = mock.add_track(r, "Audio Track")
+  -- Item at 4.0s, 10s long; synthetic peaks have 2 Hz pulse = 120 BPM
+  local it = mock.add_item_to_track(r, t, { position = 4.0, length = 10.0 })
+  mock.select_items(r, { it })
+  -- Pre-existing tempo marker inside item range
+  r.AddTempoTimeSigMarker(0, 6.0, 95.0, 4, 4, false)
+
+  -- First prompt: auto-detect (override=0); second prompt: accept detected BPM
+  r._user_inputs = { "0.35,4,4,0", "120" }
+  local err = mock.run_script(r, "Suno_02_TempoMapper.lua")
+  eq(err, nil, "script error")
+  eq(#r._tempo_markers, 1, "prior marker replaced with 1 new marker")
+  approx(r._tempo_markers[1].pos, 4.0, 0.001, "tempo marker at item_pos")
+  approx(r._tempo_markers[1].bpm, 120.0, 0.1, "detected 120 BPM")
+end)
+
+test("03: splits item at non-zero position (10.0s) using GetMediaItemTake_Peaks", function()
+  local r = mock.new()
+  local t = mock.add_track(r, "Song Track")
+  local n_peaks = 40 * 20
+  local peaks = {}
+  for i = 1, n_peaks do
+    peaks[i] = ((i - 1) / 20.0 < 15.0) and 0.1 or 0.9
+  end
+  local it = mock.add_item_to_track(r, t, {
+    position = 10.0,
+    length = 40.0,
+    peaks = peaks,
+    take_name = "LateSong",
+  })
+  mock.select_items(r, { it })
+  r._user_input_default = "0.30,8.0,12"
+
+  local err = mock.run_script(r, "Suno_03_DynamicSplitter.lua")
+  eq(err, nil, "script error")
+  eq(#t.items >= 2, true, "item at non-zero pos split into sections")
+  eq(t.items[2].position > 10.0, true, "split position > item_pos")
+end)
+
+test("04: loudness normalisation is idempotent across repeated runs", function()
+  local r = mock.new()
+  local t = mock.add_track(r, "Stem")
+  local peaks = {}
+  for i = 1, 1000 do peaks[i] = 0.05 end
+  local it = mock.add_item_to_track(r, t, { position = 5.0, length = 10.0, vol = 1.0, peaks = peaks })
+  mock.select_items(r, { it })
+  r._user_input_default = "-18,-0.3"
+
+  local err1 = mock.run_script(r, "Suno_04_LoudnessMaster.lua")
+  eq(err1, nil, "first run error")
+  local vol_after_1 = it.vol
+  eq(vol_after_1 > 1.0, true, "boosted on first run")
+
+  local err2 = mock.run_script(r, "Suno_04_LoudnessMaster.lua")
+  eq(err2, nil, "second run error")
+  approx(it.vol, vol_after_1, 0.001, "volume unchanged on second run")
+end)
+
+test("05: creates summing bus even when folder creation is disabled", function()
+  local r = mock.new()
+  local t1 = mock.add_track(r, "Vocals")
+  local t2 = mock.add_track(r, "Bass")
+  mock.add_item_to_track(r, t1, { position = 1.0, filename = "Horizon_vocals_a1b2c3d4.wav" })
+  mock.add_item_to_track(r, t2, { position = 2.0, filename = "Horizon_bass_a1b2c3d4.wav" })
+
+  r._user_input_default = "yes,no,yes"
+  local err = mock.run_script(r, "Suno_05_StemAligner.lua")
+  eq(err, nil, "script error")
+  eq(r.CountTracks(), 3, "2 stems + 1 bus track (no folder)")
+  eq(#t1.sends, 1, "vocals send to bus")
+  eq(#t2.sends, 1, "bass send to bus")
+end)
+
+print("----------------------------------------------------------------------")
+print("Various/SGM_Suno ZIP Importer")
+print("----------------------------------------------------------------------")
+
+test("imports Suno ZIP, parses info.json, creates tracks/markers/notes, keeps audio", function()
+  local tmp_root = "/tmp/sgm_suno_zip_test_" .. tostring(os.time())
+  local zip_file = tmp_root .. "/test_song.zip"
+  local proj_dir = tmp_root .. "/project"
+  os.execute('mkdir -p "' .. proj_dir .. '"')
+  os.execute(string.format(
+    'python3 -c \'import zipfile, json; z=zipfile.ZipFile("%s","w"); '
+    .. 'z.writestr("info.json", json.dumps({"title":"Midnight Pulse","tags":"synthwave",'
+    .. '"prompt":"[Intro]\\nHello\\n[Chorus]\\nWorld"})); '
+    .. 'z.writestr("vocals.wav", "RIFFDATA"); '
+    .. 'z.writestr("instrumental.wav", "RIFFDATA"); '
+    .. 'z.close()\'',
+    zip_file))
+
+  local r = mock.new()
+  r._project_path = proj_dir
+  r._imgui_browse_path = zip_file
+  r._imgui_trigger_browse = true
+  r._imgui_trigger_import = true
+  r._imgui_open = true
+  function r.defer(fn)
+    if r._imgui_open then
+      r._imgui_open = false -- run one frame after initial defer
+      fn()
+    end
+  end
+
+  local err = mock.run_script(r, "Various/SGM_Suno ZIP Importer.lua")
+  eq(err, nil, "ZIP Importer error")
+  eq(r.CountTracks(), 3, "folder + 2 stem tracks created")
+  eq(r.GetTrack(0, 0).name, "[Suno] Midnight Pulse", "folder track name from info.json")
+  eq(r.GetTrack(0, 1).name, "[Suno] Midnight Pulse (Instrumental)", "instrumental track")
+  eq(r.GetTrack(0, 2).name, "[Suno] Midnight Pulse (Vocals)", "vocals track")
+  eq(#r._markers, 2, "2 structural markers placed")
+  contains(r._project_notes, "Midnight Pulse", "project notes contain title")
+  contains(r._project_notes, "[Chorus]", "project notes contain lyrics")
+
+  -- Verify extracted audio file still exists on disk (not deleted!)
+  local imported_src = r.GetTrack(0, 1).items[1].takes[1].source.filename
+  eq(r.file_exists(imported_src), true, "imported audio file kept on disk")
+
+  os.execute('rm -rf "' .. tmp_root .. '"')
+end)
+
+test("rejects zip-slip path traversal archive", function()
+  local tmp_root = "/tmp/sgm_suno_zipslip_test_" .. tostring(os.time())
+  local zip_file = tmp_root .. "/evil.zip"
+  local proj_dir = tmp_root .. "/project"
+  os.execute('mkdir -p "' .. proj_dir .. '"')
+  os.execute(string.format(
+    'python3 -c \'import zipfile; z=zipfile.ZipFile("%s","w"); '
+    .. 'z.writestr("../../evil.wav", "BAD"); z.close()\'',
+    zip_file))
+
+  local r = mock.new()
+  r._project_path = proj_dir
+  r._imgui_browse_path = zip_file
+  r._imgui_trigger_browse = true
+  r._imgui_trigger_import = true
+  r._imgui_open = true
+  function r.defer(fn)
+    if r._imgui_open then
+      r._imgui_open = false
+      fn()
+    end
+  end
+
+  local err = mock.run_script(r, "Various/SGM_Suno ZIP Importer.lua")
+  eq(err, nil, "ZIP Importer should fail closed without crashing")
+  eq(r.CountTracks(), 0, "no tracks created for zip-slip archive")
+  contains(mock.console(r), "Unsafe path in ZIP", "zip-slip logged")
+
+  os.execute('rm -rf "' .. tmp_root .. '"')
+end)
+
+print("----------------------------------------------------------------------")
 print(string.format("Summary: %d passed, %d failed (total %d)", passed, failed, total))
 print("----------------------------------------------------------------------")
 

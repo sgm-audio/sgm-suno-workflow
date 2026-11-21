@@ -1,7 +1,11 @@
 -- @description Scan tracks, parse Suno AI filenames, rename tracks, assign colors, and tag metadata
 -- @author Scott Mills
--- @version 1.0.2
+-- @version 1.0.3
 -- @changelog
+--   1.0.3 (2026-11-20)
+--     + Resolve parent source for section/reversed items and guard empty filenames
+--     + Fix CSV parsing when a field is left blank in GetUserInputs
+--     + Fix unique song count when all processed tracks are stems
 --   1.0.2 (2026-11-06)
 --     + Fix stem detection when a Suno ID suffix is present (strip ID before stem match)
 --   1.0.1 (2026-06-03)
@@ -72,7 +76,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Metadata Organizer"
-local SCRIPT_VERSION = "1.0.2"
+local SCRIPT_VERSION = "1.0.3"
 
 -- ─── COLOR PALETTE ──────────────────────────────────────────────────────────
 
@@ -174,7 +178,12 @@ local function track_source_filename(track)
   if not take or reaper.TakeIsMIDI(take) then return nil end
   local src  = reaper.GetMediaItemTake_Source(take)
   if not src then return nil end
-  return reaper.GetMediaSourceFileName(src, "")
+  while reaper.GetMediaSourceParent and reaper.GetMediaSourceParent(src) do
+    src = reaper.GetMediaSourceParent(src)
+  end
+  local fname = reaper.GetMediaSourceFileName(src)
+  if not fname or fname == "" then return nil end
+  return fname
 end
 
 -- ─── INIT ───────────────────────────────────────────────────────────────────
@@ -202,7 +211,10 @@ local function Main()
   if not ok then return end
 
   local parts = {}
-  for p in csv:gmatch("[^,]+") do table.insert(parts, trim(p):lower()) end
+  for p in (csv .. ","):gmatch("([^,]*),") do
+    local t = trim(p):lower()
+    table.insert(parts, t ~= "" and t or nil)
+  end
   local scope      = parts[1] or "all"
   local do_regions = (parts[2] or "yes") ~= "no"
   local do_color   = (parts[3] or "yes") ~= "no"
@@ -215,6 +227,7 @@ local function Main()
   reaper.PreventUIRefresh(1)
 
   local song_colors  = {}  -- song_name → palette index
+  local unique_songs = {}  -- all unique song names processed
   local next_color   = 1
   local n_processed  = 0
   local n_skipped    = 0
@@ -234,6 +247,7 @@ local function Main()
     end
 
     local song_name, _, stem_type = parse_suno_filename(src_path)
+    unique_songs[song_name] = true
 
     -- ── Rename track ────────────────────────────────────────────────────
     local label = song_name
@@ -284,7 +298,7 @@ local function Main()
   reaper.TrackList_AdjustWindows(false)
 
   local n_songs = 0
-  for _ in pairs(song_colors) do n_songs = n_songs + 1 end
+  for _ in pairs(unique_songs) do n_songs = n_songs + 1 end
 
   reaper.MB(
     ("Complete!\n\nProcessed : %d track(s)\nSkipped   : %d track(s)\n"

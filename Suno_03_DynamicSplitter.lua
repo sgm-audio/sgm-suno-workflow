@@ -1,7 +1,12 @@
 -- @description Split Suno audio items at structural boundaries (verse/chorus/bridge) using energy contrast
 -- @author Scott Mills
--- @version 1.0.0
+-- @version 1.0.1
 -- @changelog
+--   1.0.1 (2026-11-20)
+--     + Fix REAPER API call: GetMediaItemTake_Peaks (was MediaItemTake_GetPeaks)
+--     + Fix peak buffer size (2 * num_chans * n_frames), interleaved indexing, and retval bitmask
+--     + Pass item_pos as starttime to GetMediaItemTake_Peaks
+--     + Fix CSV parsing when a field is left blank in GetUserInputs
 --   1.0.0 (2026-05-23)
 --     + Initial release
 --     + Long-window energy contrast structural detection
@@ -73,7 +78,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Dynamic Splitter"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.1"
 
 -- ─── TUNEABLE DEFAULTS ────────────────────────────────────────────────────────
 
@@ -113,17 +118,21 @@ end
 
 local function detect_boundaries(take, item_pos, item_len, sensitivity, min_section_secs)
   local src       = reaper.GetMediaItemTake_Source(take)
-  local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
+  if not src then
+    return nil, "Take has no media source."
+  end
+  local num_chans = math.max(1, math.min(2, reaper.GetMediaSourceNumChannels(src)))
   local n_frames  = math.ceil(item_len * SHORT_FRAME_RATE)
 
   if n_frames < 4 then
     return nil, "Item is too short to analyse."
   end
 
-  -- Fetch peaks at SHORT_FRAME_RATE resolution (1 value per frame per channel)
-  local buf = reaper.new_array(num_chans * n_frames)
-  local n   = reaper.MediaItemTake_GetPeaks(
-                take, SHORT_FRAME_RATE, 0, num_chans, n_frames, 0, buf)
+  -- Fetch peaks at SHORT_FRAME_RATE resolution (2 * num_chans * n_frames: max + min, interleaved)
+  local buf    = reaper.new_array(2 * num_chans * n_frames)
+  local retval = reaper.GetMediaItemTake_Peaks(
+                   take, SHORT_FRAME_RATE, item_pos, num_chans, n_frames, 0, buf)
+  local n      = retval & 0xFFFFF
 
   if n < 4 then
     return nil,
@@ -136,7 +145,9 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
   for s = 1, n do
     local e = 0.0
     for c = 0, num_chans - 1 do
-      local v = buf[c * n + s]
+      local max_v = buf[(s - 1) * num_chans + c + 1] or 0.0
+      local min_v = buf[n * num_chans + (s - 1) * num_chans + c + 1] or 0.0
+      local v = math.max(math.abs(max_v), math.abs(min_v))
       e = e + v * v
     end
     energy[s] = e / num_chans
@@ -239,8 +250,8 @@ local function Main()
   if not ok then return end
 
   local params = {}
-  for p in csv:gmatch("[^,]+") do
-    table.insert(params, tonumber(trim(p)) or 0)
+  for p in (csv .. ","):gmatch("([^,]*),") do
+    table.insert(params, tonumber(trim(p)))
   end
   local sensitivity  = clamp(params[1] or 0.40, 0.1, 1.0)
   local min_section  = math.max(1.0, params[2] or 8.0)

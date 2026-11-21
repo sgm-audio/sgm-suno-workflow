@@ -1,7 +1,14 @@
 -- @description Import a Suno AI ZIP file: unzip, parse metadata, create color-coded session with lyrics markers
 -- @author Scott Mills
--- @version 1.1.1
+-- @version 1.1.2
 -- @changelog
+--   1.1.2 (2026-11-20)
+--     + Replace non-existent reaper.GetTempPath() with project/resource media path
+--     + Keep extracted audio files on disk after import (prevents Media Offline)
+--     + Fix json_string() key/value offset bug (was returning ": " instead of value)
+--     + Guard removed reaper.ImGui_DestroyContext() on ReaImGui 0.9+/0.10+
+--     + Replace undefined lfs and shell dir calls with native REAPER APIs
+--     + Fix SWS detection (reaper.CF_GetSWSVersion)
 --   1.1.1 (2026-11-06)
 --     + Validate every ZIP member path before extraction (zip-slip / path-traversal guard)
 --     + Nil-guard folder track and stem tracks so failures can't crash REAPER
@@ -104,7 +111,7 @@ end
 -- ─── CONSTANTS ──────────────────────────────────────────────────────────────
 
 local SCRIPT_NAME    = "Suno ZIP Importer"
-local SCRIPT_VERSION = "1.1.1"
+local SCRIPT_VERSION = "1.1.2"
 local WINDOW_W       = 640
 local WINDOW_H       = 520
 
@@ -194,6 +201,7 @@ end
 
 -- Check if a file exists
 local function file_exists(path)
+  if reaper.file_exists then return reaper.file_exists(path) end
   local f = io.open(path, "r")
   if f then f:close(); return true end
   return false
@@ -202,11 +210,9 @@ end
 -- ─── DIRECTORY OPERATIONS ───────────────────────────────────────────────────
 
 local function dir_exists(path)
-  if lfs then
-    local attr = lfs.attributes(path)
-    return attr ~= nil and attr.mode == "directory"
+  if reaper.EnumerateFiles(path, 0) ~= nil or reaper.EnumerateSubdirectories(path, 0) ~= nil then
+    return true
   end
-  -- Fallback: try to list directory
   local cmd = is_windows()
     and ('cmd /c "if exist "' .. path .. '\\" (exit 0) else (exit 1)" 2>nul')
     or  ('[ -d "' .. path:gsub('"', '\\"') .. '" ] && exit 0 || exit 1')
@@ -215,9 +221,8 @@ local function dir_exists(path)
 end
 
 local function mkdir_p(path)
-  if lfs then
-    -- Create parent dirs as needed (lfs.mkdir is non-recursive)
-    lfs.mkdir(path)
+  if reaper.RecursiveCreateDirectory then
+    reaper.RecursiveCreateDirectory(path, 0)
     return dir_exists(path)
   end
   local cmd = is_windows()
@@ -228,6 +233,7 @@ local function mkdir_p(path)
 end
 
 local function rmdir_recursive(path)
+  if not path or path == "" then return end
   if is_windows() then
     os.execute('rmdir /s /q "' .. path .. '" 2>nul')
   else
@@ -240,36 +246,14 @@ end
 local function list_dir_files(dir, fname_pattern)
   local results = {}
   dir = trail(dir)
-
-  if lfs then
-    for entry in lfs.dir(dir) do
-      if entry ~= "." and entry ~= ".." then
-        local full = dir .. entry
-        local attr = lfs.attributes(full)
-        if attr and attr.mode == "file" then
-          if (not fname_pattern) or entry:lower():match(fname_pattern) then
-            table.insert(results, full)
-          end
-        end
-      end
+  local i = 0
+  while true do
+    local entry = reaper.EnumerateFiles(dir, i)
+    if not entry then break end
+    if (not fname_pattern) or entry:lower():match(fname_pattern) then
+      table.insert(results, dir .. entry)
     end
-  else
-    local cmd = is_windows()
-      and ('dir /b /a-d "' .. dir .. '" 2>nul')
-      or  ('ls -1p "' .. dir:gsub('"', '\\"') .. '" 2>/dev/null | grep -v /')
-    local pipe = io.popen(cmd)
-    if pipe then
-      for line in pipe:lines() do
-        line = line:match("^%s*(.-)%s*$")  -- trim
-        if line ~= "" then
-          local full = dir .. line
-          if (not fname_pattern) or line:lower():match(fname_pattern) then
-            table.insert(results, full)
-          end
-        end
-      end
-      pipe:close()
-    end
+    i = i + 1
   end
   return results
 end
@@ -278,33 +262,12 @@ end
 local function list_subdirs(dir)
   local results = {}
   dir = trail(dir)
-  if lfs then
-    for entry in lfs.dir(dir) do
-      if entry ~= "." and entry ~= ".." then
-        local full = dir .. entry
-        local attr = lfs.attributes(full)
-        if attr and attr.mode == "directory" then
-          table.insert(results, full)
-        end
-      end
-    end
-  else
-    local cmd = is_windows()
-      and ('dir /b /ad "' .. dir .. '" 2>nul')
-      or  ('find "' .. dir:gsub('"', '\\"') .. '" -maxdepth 1 -mindepth 1 -type d 2>/dev/null')
-    local pipe = io.popen(cmd)
-    if pipe then
-      for line in pipe:lines() do
-        line = line:match("^%s*(.-)%s*$")
-        if line ~= "" then
-          -- popen on macOS/Linux gives full path for find, just name for ls
-          local full = (line:sub(1,1) == "/" or line:sub(2,2) == ":") and line
-                       or (dir .. line)
-          table.insert(results, full)
-        end
-      end
-      pipe:close()
-    end
+  local i = 0
+  while true do
+    local entry = reaper.EnumerateSubdirectories(dir, i)
+    if not entry then break end
+    table.insert(results, dir .. entry)
+    i = i + 1
   end
   return results
 end
@@ -415,13 +378,11 @@ end
 
 local function json_string(json, key)
   local pat_start = '"' .. key .. '"%s*:%s*"'
-  local s = json:find(pat_start)
-  if not s then return nil end
+  local _, e = json:find(pat_start)
+  if not e then return nil end
 
-  -- Advance past key + colon + opening quote
-  local pos = json:find('"', s + #key + 1)
-  if not pos then return nil end
-  pos = pos + 1  -- skip opening quote
+  -- e is the opening quote of the value; start reading right after it
+  local pos = e + 1
 
   -- Read until unescaped closing quote
   local chars = {}
@@ -559,8 +520,9 @@ local function import_audio(track, filepath)
   reaper.SetMediaItemTake_Source(take, src)
 
   local src_len = reaper.GetMediaSourceLength(src)
-  if not src_len then
+  if not src_len or src_len <= 0 then
     warn("Cannot get source length: " .. filepath)
+    reaper.DeleteTrackMediaItem(track, item)
     return nil, nil
   end
   reaper.SetMediaItemInfo_Value(item, "D_POSITION",   0)
@@ -573,15 +535,39 @@ end
 
 -- ─── CORE IMPORT PIPELINE ───────────────────────────────────────────────────
 
+local function get_extract_base_dir()
+  local proj_path = reaper.GetProjectPath and reaper.GetProjectPath() or ""
+  if proj_path ~= "" then
+    return trail(proj_path) .. "Suno_Imports"
+  end
+  local res_path = reaper.GetResourcePath and reaper.GetResourcePath() or ""
+  if res_path ~= "" then
+    return trail(res_path) .. "Suno_Imports"
+  end
+  local tmp = os.getenv("TMPDIR") or os.getenv("TEMP") or os.getenv("TMP") or "/tmp"
+  return trail(tmp) .. "Suno_Imports"
+end
+
+local function is_audio_filename(path)
+  local lower = path:lower()
+  return lower:match("%.wav$") ~= nil
+      or lower:match("%.mp3$") ~= nil
+      or lower:match("%.flac$") ~= nil
+      or lower:match("%.ogg$") ~= nil
+      or lower:match("%.m4a$") ~= nil
+      or lower:match("%.aiff?$") ~= nil
+end
+
 local function do_import()
   state.phase    = "importing"
   state.progress = 0.0
 
   -- ── 1. Extract ZIP ──────────────────────────────────────────────────────
-  local tmp_base   = trail(reaper.GetTempPath())
+  local base_dir   = trail(get_extract_base_dir())
   local stamp      = tostring(os.time()):sub(-6)  -- last 6 digits of epoch
   local zip_name   = stripext(basename(state.zip_path))
-  state.temp_dir   = tmp_base .. "suno_" .. zip_name .. "_" .. stamp
+  local safe_zip   = zip_name:gsub('[/\\:*?"<>|%z]', "_")
+  state.temp_dir   = base_dir .. "suno_" .. safe_zip .. "_" .. stamp
 
   info("Extracting ZIP…")
   info("  From: " .. state.zip_path)
@@ -596,21 +582,26 @@ local function do_import()
   info("Extraction OK.")
   state.progress = 0.20
 
-  -- ── 2. Locate files (search root + one level of subdirs) ────────────────
-  local function find_files(dir, pattern)
-    local found = list_dir_files(dir, pattern)
-    if #found == 0 then
-      for _, sub in ipairs(list_subdirs(dir)) do
-        for _, f in ipairs(list_dir_files(sub, pattern)) do
-          table.insert(found, f)
-        end
+  -- ── 2. Locate files recursively ─────────────────────────────────────────
+  local function find_files(dir, predicate)
+    local found = {}
+    for _, f in ipairs(list_dir_files(dir)) do
+      if (not predicate) or predicate(f) then
+        table.insert(found, f)
+      end
+    end
+    for _, sub in ipairs(list_subdirs(dir)) do
+      for _, f in ipairs(find_files(sub, predicate)) do
+        table.insert(found, f)
       end
     end
     return found
   end
 
   -- ── 3. Parse info.json ──────────────────────────────────────────────────
-  local json_files = find_files(state.temp_dir, "info%.json$")
+  local json_files = find_files(state.temp_dir, function(f)
+    return basename(f):lower() == "info.json"
+  end)
   if #json_files > 0 then
     state.meta = parse_info_json(json_files[1])
     info("Title : " .. state.meta.title)
@@ -625,9 +616,10 @@ local function do_import()
   state.progress = 0.35
 
   -- ── 4. Discover and classify audio files ────────────────────────────────
-  local audio_files = find_files(state.temp_dir, "%.[mw][p3av]+$")
+  local audio_files = find_files(state.temp_dir, is_audio_filename)
   if #audio_files == 0 then
-    lerr("No audio files (MP3/WAV) found inside the ZIP.")
+    lerr("No audio files (WAV/MP3/FLAC/OGG/M4A/AIFF) found inside the ZIP.")
+    rmdir_recursive(state.temp_dir)
     state.phase = "error"
     return
   end
@@ -754,9 +746,13 @@ local function do_import()
   reaper.TrackList_AdjustWindows(false)
   state.progress = 0.96
 
-  -- ── 11. Cleanup temp dir ────────────────────────────────────────────────
-  info("Cleaning up temp folder…")
-  rmdir_recursive(state.temp_dir)
+  -- ── 11. Cleanup only if cancelled ───────────────────────────────────────
+  if cancelled then
+    info("Cleaning up cancelled import folder…")
+    rmdir_recursive(state.temp_dir)
+  else
+    info("Audio files kept at: " .. state.temp_dir)
+  end
 
   info(string.rep("─", 38))
   info(("Done!  \"%s\"  |  %d stems"):format(state.meta.title, #stems))
@@ -912,15 +908,16 @@ local function loop()
   if open then
     reaper.defer(loop)
   else
-    reaper.ImGui_DestroyContext(ctx)
+    if reaper.ImGui_DestroyContext then
+      reaper.ImGui_DestroyContext(ctx)
+    end
   end
 end
 
 -- ─── ENTRY POINT ────────────────────────────────────────────────────────────
 
-if not reaper.SWS_GetVersion then
-  warn("SWS extension not detected — file listing may be slower without lfs.")
-  warn("Get SWS at: https://www.sws-extension.org/")
+if not reaper.CF_GetSWSVersion then
+  info("Note: SWS extension not detected (optional).")
 end
 
 info(("Suno ZIP Importer v%s ready."):format(SCRIPT_VERSION))

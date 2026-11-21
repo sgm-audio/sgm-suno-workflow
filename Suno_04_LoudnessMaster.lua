@@ -1,7 +1,13 @@
 -- @description Batch-normalise selected Suno items to a target loudness level (RMS estimate)
 -- @author Scott Mills
--- @version 1.0.0
+-- @version 1.0.1
 -- @changelog
+--   1.0.1 (2026-11-20)
+--     + Fix REAPER API call: GetMediaItemTake_Peaks (was MediaItemTake_GetPeaks)
+--     + Fix peak buffer size (2 * num_chans * n_req), interleaved indexing, and retval bitmask
+--     + Pass item_pos as starttime to GetMediaItemTake_Peaks
+--     + Account for existing item D_VOL so re-running is idempotent
+--     + Remove unused variables and fix CSV parsing
 --   1.0.0 (2026-05-23)
 --     + Initial release
 --     + Per-item integrated loudness measurement
@@ -84,7 +90,7 @@
 ============================================================================]]--
 
 local SCRIPT_NAME    = "Suno Loudness Master"
-local SCRIPT_VERSION = "1.0.0"
+local SCRIPT_VERSION = "1.0.1"
 
 -- ─── TUNEABLE DEFAULTS ────────────────────────────────────────────────────────
 
@@ -117,28 +123,33 @@ local function measure_item(item)
   if not take or reaper.TakeIsMIDI(take) then return nil end
 
   local src       = reaper.GetMediaItemTake_Source(take)
-  local num_chans = math.min(2, reaper.GetMediaSourceNumChannels(src))
+  if not src then return nil end
+  local num_chans = math.max(1, math.min(2, reaper.GetMediaSourceNumChannels(src)))
+  local item_pos  = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local item_len  = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
   local n_req     = math.ceil(item_len * PEAKRATE)
 
   if n_req < 2 then return nil end
 
-  -- want_extra_type = 0: positive peaks only (channel-major layout)
-  local buf = reaper.new_array(num_chans * n_req)
-  local n   = reaper.MediaItemTake_GetPeaks(take, PEAKRATE, 0, num_chans, n_req, 0, buf)
+  -- 2 * num_chans * n_req: max peaks followed by min peaks, channel-interleaved
+  local buf    = reaper.new_array(2 * num_chans * n_req)
+  local retval = reaper.GetMediaItemTake_Peaks(take, PEAKRATE, item_pos, num_chans, n_req, 0, buf)
+  local n      = retval & 0xFFFFF
   if n < 2 then return nil end
 
   local sum_sq  = 0.0
   local peak    = 0.0
 
   for s = 1, n do
-    local max_v = 0.0
+    local frame_max = 0.0
     for c = 0, num_chans - 1 do
-      local v = buf[c * n + s]
-      if v > max_v then max_v = v end
+      local max_v = buf[(s - 1) * num_chans + c + 1] or 0.0
+      local min_v = buf[n * num_chans + (s - 1) * num_chans + c + 1] or 0.0
+      local v = math.max(math.abs(max_v), math.abs(min_v))
+      if v > frame_max then frame_max = v end
     end
-    sum_sq = sum_sq + max_v * max_v
-    if max_v > peak then peak = max_v end
+    sum_sq = sum_sq + frame_max * frame_max
+    if frame_max > peak then peak = frame_max end
   end
 
   local rms_linear = math.sqrt(sum_sq / n)
@@ -180,7 +191,9 @@ local function Main()
   if not ok then return end
 
   local parts      = {}
-  for p in csv:gmatch("[^,]+") do table.insert(parts, tonumber(trim(p))) end
+  for p in (csv .. ","):gmatch("([^,]*),") do
+    table.insert(parts, tonumber(trim(p)))
+  end
   local target_db  = parts[1] or -18.0
   local ceiling_db = parts[2] or -0.3
 
@@ -192,9 +205,6 @@ local function Main()
     return
   end
   if ceiling_db > 0 then ceiling_db = -0.1 end
-
-  local target_lin  = db_to_linear(target_db)
-  local ceiling_lin = db_to_linear(ceiling_db)
 
   -- ── Collect selected items ────────────────────────────────────────────
   local n_items = reaper.CountSelectedMediaItems(0)
@@ -214,8 +224,11 @@ local function Main()
   for _, item in ipairs(items) do
     local take     = reaper.GetActiveTake(item)
     local src      = take and reaper.GetMediaItemTake_Source(take)
-    local fname    = src  and (reaper.GetMediaSourceFileName(src, ""):match("[/\\]([^/\\]+)$") or "?")
-                          or "?"
+    while src and reaper.GetMediaSourceParent and reaper.GetMediaSourceParent(src) do
+      src = reaper.GetMediaSourceParent(src)
+    end
+    local raw_fn   = src and reaper.GetMediaSourceFileName(src) or ""
+    local fname    = raw_fn:match("[/\\]([^/\\]+)$") or (raw_fn ~= "" and raw_fn or "?")
 
     local meas = measure_item(item)
     if not meas then
@@ -224,44 +237,50 @@ local function Main()
       goto continue
     end
 
-    local delta_db = target_db - meas.rms_db
+    local current_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
+    if current_vol <= 0 then
+      n_failed = n_failed + 1
+      table.insert(log_lines, ("SKIP  %-40s  (zero item volume)"):format(fname))
+      goto continue
+    end
+
+    local vol_db      = linear_to_db(current_vol)
+    local eff_rms_db  = meas.rms_db + vol_db
+    local eff_peak_db = meas.peak_db + vol_db
+    local delta_db    = target_db - eff_rms_db
 
     if math.abs(delta_db) < SKIP_THRESHOLD then
       n_skipped = n_skipped + 1
       table.insert(log_lines,
-        ("OK    %-40s  %.1f dBFS RMS  (already at target)"):format(fname, meas.rms_db))
+        ("OK    %-40s  %.1f dBFS RMS  (already at target)"):format(fname, eff_rms_db))
       goto continue
     end
 
     -- Compute new linear gain, clamped so peaks stay below ceiling
-    local current_vol = reaper.GetMediaItemInfo_Value(item, "D_VOL")
-    local gain_factor = db_to_linear(delta_db)
-
-    -- Estimated post-gain peak
-    local est_peak_db = meas.peak_db + delta_db
+    local est_peak_db = eff_peak_db + delta_db
     if est_peak_db > ceiling_db then
       -- Reduce gain so the peak lands exactly on the ceiling
       local overshoot = est_peak_db - ceiling_db
-      delta_db    = delta_db - overshoot
-      gain_factor = db_to_linear(delta_db)
+      delta_db = delta_db - overshoot
       table.insert(log_lines,
         ("LIMIT %-40s  peak limited by %.1f dB"):format(fname, overshoot))
     end
 
-    local new_vol = math.max(0.0, current_vol * gain_factor)
+    local gain_factor = db_to_linear(delta_db)
+    local new_vol     = math.max(0.0, current_vol * gain_factor)
     reaper.SetMediaItemInfo_Value(item, "D_VOL", new_vol)
 
     n_adjusted = n_adjusted + 1
     table.insert(log_lines,
       ("ADJ   %-40s  %+.1f dB  (%.1f → %.1f dBFS RMS)")
-      :format(fname, delta_db, meas.rms_db, meas.rms_db + delta_db))
+      :format(fname, delta_db, eff_rms_db, eff_rms_db + delta_db))
 
     ::continue::
   end
 
   reaper.PreventUIRefresh(-1)
   reaper.Undo_EndBlock(
-    ("Suno Loudness: %d items → %.0f dBFS"):format(n_adjusted, target_db), -1)
+    ("%s v%s: %d items → %.0f dBFS"):format(SCRIPT_NAME, SCRIPT_VERSION, n_adjusted, target_db), -1)
   reaper.UpdateArrange()
 
   -- Log summary to console

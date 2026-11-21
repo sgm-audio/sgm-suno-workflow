@@ -847,7 +847,11 @@ local function loop()
     local can_import = (state.phase == "ready")
     if not can_import then reaper.ImGui_BeginDisabled(ctx, true) end
     if reaper.ImGui_Button(ctx, "     Import into REAPER!     ") then
-      do_import()
+      local ok, err = pcall(do_import)
+      if not ok then
+        lerr("Unexpected error: " .. tostring(err))
+        state.phase = "error"
+      end
     end
     if not can_import then reaper.ImGui_EndDisabled(ctx) end
 

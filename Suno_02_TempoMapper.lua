@@ -71,7 +71,7 @@
       7. Octave-correct into the 70–160 BPM range typical of Suno output.
       8. Present the result for confirmation — user can accept or override.
 
-    Buffer layout for MediaItemTake_GetPeaks (want_extra_type = 0):
+    Buffer layout for GetMediaItemTake_Peaks (want_extra_type = 0):
       buf[1 .. n]       = channel 0 positive peaks   (n = return value)
       buf[n+1 .. 2*n]   = channel 1 positive peaks   (stereo only)
     Values are normalised floats in [0.0, 1.0].

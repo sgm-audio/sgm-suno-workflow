@@ -69,7 +69,7 @@
   DEPENDENCIES:
     - REAPER 6.70+
     - ReaImGui extension  (ReaPack: cockos/reaimgui)
-    - SWS/S&M Extension   (recommended; enables lfs for faster file listing)
+    - SWS/S&M Extension   (optional)
       https://www.sws-extension.org/
 
   SUNO ZIP CONTENTS (expected):
@@ -214,7 +214,7 @@ local function dir_exists(path)
     return true
   end
   local cmd = is_windows()
-    and ('cmd /c "if exist "' .. path .. '\\" (exit 0) else (exit 1)" 2>nul')
+    and ('if exist "' .. path .. '\\" (exit 0) else (exit 1)')
     or  ('[ -d "' .. path:gsub('"', '\\"') .. '" ] && exit 0 || exit 1')
   local ok = os.execute(cmd)
   return ok == 0 or ok == true

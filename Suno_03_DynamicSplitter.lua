@@ -122,7 +122,13 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
     return nil, "Take has no media source."
   end
   local num_chans = math.max(1, math.min(2, reaper.GetMediaSourceNumChannels(src)))
-  local n_frames  = math.ceil(item_len * SHORT_FRAME_RATE)
+  local rate      = SHORT_FRAME_RATE
+  local n_frames  = math.ceil(item_len * rate)
+  local max_spls  = math.floor(4000000 / (2 * num_chans))
+  if n_frames > max_spls then
+    n_frames = max_spls
+    rate     = n_frames / item_len
+  end
 
   if n_frames < 4 then
     return nil, "Item is too short to analyse."
@@ -131,7 +137,7 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
   -- Fetch peaks at SHORT_FRAME_RATE resolution (2 * num_chans * n_frames: max + min, interleaved)
   local buf    = reaper.new_array(2 * num_chans * n_frames)
   local retval = reaper.GetMediaItemTake_Peaks(
-                   take, SHORT_FRAME_RATE, item_pos, num_chans, n_frames, 0, buf)
+                   take, rate, item_pos, num_chans, n_frames, 0, buf)
   local n      = retval & 0xFFFFF
 
   if n < 4 then
@@ -154,7 +160,7 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
   end
 
   -- Long-window moving average RMS (the "background" energy level)
-  local long_win_frames = math.max(2, math.floor(LONG_WIN_SECS * SHORT_FRAME_RATE))
+  local long_win_frames = math.max(2, math.floor(LONG_WIN_SECS * rate))
   local long_avg        = {}
   for s = 1, n do
     local lo  = math.max(1, s - long_win_frames)
@@ -202,7 +208,7 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
   local threshold = mean_o + mult * std_o
 
   -- Min gap in frames
-  local min_gap = math.max(1, math.floor(min_section_secs * SHORT_FRAME_RATE))
+  local min_gap = math.max(1, math.floor(min_section_secs * rate))
 
   -- Peak-picking
   local boundaries = {}
@@ -215,7 +221,7 @@ local function detect_boundaries(take, item_pos, item_len, sensitivity, min_sect
       and (s - last_idx) >= min_gap
     then
       -- Convert frame index to project time
-      local t = item_pos + (s - 1) / SHORT_FRAME_RATE
+      local t = item_pos + (s - 1) / rate
       table.insert(boundaries, t)
       last_idx = s
     end

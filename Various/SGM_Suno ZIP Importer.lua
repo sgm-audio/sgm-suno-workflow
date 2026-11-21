@@ -807,7 +807,7 @@ local function loop()
     local path_display = (state.zip_path ~= "") and state.zip_path or "(none selected)"
     -- Clamp to available width minus button width
     local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
-    reaper.ImGui_SetNextItemWidth(ctx, avail_w - 90)
+    reaper.ImGui_SetNextItemWidth(ctx, math.max(100, avail_w - 90))
     -- Read-only display using InputText (shows full path with horizontal scroll)
     reaper.ImGui_InputText(ctx, "##zippath", path_display,
       reaper.ImGui_InputTextFlags_ReadOnly())

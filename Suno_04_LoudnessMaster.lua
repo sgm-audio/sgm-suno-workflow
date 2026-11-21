@@ -127,13 +127,19 @@ local function measure_item(item)
   local num_chans = math.max(1, math.min(2, reaper.GetMediaSourceNumChannels(src)))
   local item_pos  = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
   local item_len  = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
-  local n_req     = math.ceil(item_len * PEAKRATE)
+  local rate      = PEAKRATE
+  local n_req     = math.ceil(item_len * rate)
+  local max_spls  = math.floor(4000000 / (2 * num_chans))
+  if n_req > max_spls then
+    n_req = max_spls
+    rate  = n_req / item_len
+  end
 
   if n_req < 2 then return nil end
 
   -- 2 * num_chans * n_req: max peaks followed by min peaks, channel-interleaved
   local buf    = reaper.new_array(2 * num_chans * n_req)
-  local retval = reaper.GetMediaItemTake_Peaks(take, PEAKRATE, item_pos, num_chans, n_req, 0, buf)
+  local retval = reaper.GetMediaItemTake_Peaks(take, rate, item_pos, num_chans, n_req, 0, buf)
   local n      = retval & 0xFFFFF
   if n < 2 then return nil end
 

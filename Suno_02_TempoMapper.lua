@@ -126,7 +126,13 @@ local function detect_onsets(take, item_pos, item_length, sensitivity)
     return nil, "Take has no media source."
   end
   local num_chans = math.max(1, math.min(2, reaper.GetMediaSourceNumChannels(src)))
-  local n_req     = math.ceil(item_length * PEAKRATE)
+  local rate      = PEAKRATE
+  local n_req     = math.ceil(item_length * rate)
+  local max_spls  = math.floor(4000000 / (2 * num_chans))
+  if n_req > max_spls then
+    n_req = max_spls
+    rate  = n_req / item_length
+  end
 
   if n_req < 8 then
     return nil, "Item is too short to analyse (need at least 20 ms)."
@@ -134,7 +140,7 @@ local function detect_onsets(take, item_pos, item_length, sensitivity)
 
   -- Buffer: 2 * num_chans * n_req (max peaks followed by min peaks, channel-interleaved)
   local buf    = reaper.new_array(2 * num_chans * n_req)
-  local retval = reaper.GetMediaItemTake_Peaks(take, PEAKRATE, item_pos, num_chans, n_req, 0, buf)
+  local retval = reaper.GetMediaItemTake_Peaks(take, rate, item_pos, num_chans, n_req, 0, buf)
   local n      = retval & 0xFFFFF
 
   if n < 8 then
@@ -156,7 +162,7 @@ local function detect_onsets(take, item_pos, item_length, sensitivity)
   end
 
   -- Hann-weighted smoothing over ±HALF_WIN frames (~25 ms total window)
-  local HALF_WIN = math.max(1, math.floor(0.0125 * PEAKRATE))   -- 5 at 400 Hz
+  local HALF_WIN = math.max(1, math.floor(0.0125 * rate))   -- 5 at 400 Hz
   local smoothed = {}
   for s = 1, n do
     local sum, w_tot = 0.0, 0.0
@@ -202,7 +208,7 @@ local function detect_onsets(take, item_pos, item_length, sensitivity)
 
   -- Peak-pick: local maxima above threshold, enforcing MIN_ONSET_GAP
   local onsets  = {}
-  local min_gap = math.floor(MIN_ONSET_GAP * PEAKRATE)
+  local min_gap = math.floor(MIN_ONSET_GAP * rate)
   local last    = -(min_gap + 1)
 
   for s = 2, n - 1 do
@@ -211,7 +217,7 @@ local function detect_onsets(take, item_pos, item_length, sensitivity)
       and odf[s] >= odf[s + 1]
       and (s - last) >= min_gap
     then
-      table.insert(onsets, (s - 1) / PEAKRATE)
+      table.insert(onsets, (s - 1) / rate)
       last = s
     end
   end
